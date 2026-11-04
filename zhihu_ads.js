@@ -3,31 +3,40 @@
  *
  * The script takes a generic approach and does not depend on one fixed JSON layout:
  *   1. It walks the whole JSON tree recursively.
- *   2. It removes any array element that looks like an ad card.
- *   3. It deletes ad-only fields (ad_info, adjson, promotion_extra, ...) from the remaining objects.
- * This keeps the script working when Zhihu moves ad cards between endpoints.
+ *   2. It removes array elements that are standalone ad cards in feeds.
+ *   3. For normal content items (such as answers in next-render / questions/.../answers),
+ *      it keeps the answer item so swiping to the next answer still works, and deletes
+ *      only the embedded ad fields (ad_info, adjson, promotion_extra, ...) inside it.
  */
 
 const MAX_DEPTH = 15;
 
-// Values of type, card_type, style, etc. that mark an ad card
+const REQ_URL = typeof $request !== "undefined" && $request && $request.url ? $request.url : "";
+
+// Endpoints that return lists of answers or next-answer pages for a question.
+// On these endpoints we must NOT drop answer elements from arrays just because they
+// carry an embedded adjson / ad_info for the ad under the answer; we only strip the ad fields.
+const IS_ANSWER_LIST_URL = /\/(next-(render|data|bff)|(v4\/)?questions\/\d+\/(answers|feeds)|(v4\/)?answers\/)/i.test(
+  REQ_URL
+);
+
+// Values of type, card_type, style, etc. that explicitly mark a standalone ad card
 const AD_TYPE_RE =
   /(^|[_\-])(ad|ads|advert|adverts|advertisement|promotion)([_\-]|$)|feed_advert|market_card|slot_(video_)?event_card/i;
 
-// Fields that only appear on ad or promoted cards. If an array element has one of these, the element is dropped.
+// Fields that appear on promoted feed cards (and sometimes as embedded ad data on answer objects)
 const AD_MARKER_KEYS = ["adjson", "promotion_extra", "ad_extra"];
 
-// Fields to delete from any object we keep (for example, comment-page ad slots or answer-bottom ads)
+// Ad-only fields to delete from any object we keep (such as answer-bottom ads or comment-page ad slots)
 const AD_STRIP_KEYS = [
   "ad_info",
   "adjson",
-  "ad",
-  "ads",
   "ad_list",
   "promotion_extra",
   "ad_extra",
   "commercial_info",
   "mobile_banner",
+  "ad_track_url",
 ];
 
 function nonEmpty(v) {
@@ -41,10 +50,28 @@ function typeLooksLikeAd(v) {
   return typeof v === "string" && AD_TYPE_RE.test(v);
 }
 
+function isNormalContentItem(item) {
+  const t = item.type || item.card_type || item.object_type || item.biz_type;
+  if (
+    typeof t === "string" &&
+    /^(answer|question|article|zvideo|pin|comment|next_answer|content|people)$/i.test(t)
+  ) {
+    return true;
+  }
+  const targetType = item.target && typeof item.target === "object" ? item.target.type : null;
+  if (
+    typeof targetType === "string" &&
+    /^(answer|question|article|zvideo|pin|comment)$/i.test(targetType)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function isAd(item) {
   if (!item || typeof item !== "object" || Array.isArray(item)) return false;
 
-  // 1) Type-like fields
+  // 1) Type-like fields that explicitly identify a standalone ad card
   if (
     typeLooksLikeAd(item.type) ||
     typeLooksLikeAd(item.card_type) ||
@@ -61,17 +88,23 @@ function isAd(item) {
     return true;
   }
 
-  // 2) Marker fields that only ad or promoted cards have
+  // 2) The "brief" field is a JSON string, for example {"source":"ad","type":"..."}
+  if (typeof item.brief === "string" && /"(type|source)"\s*:\s*"(ad|advert|feed_advert)"/i.test(item.brief)) {
+    return true;
+  }
+
+  // 3) On answer-list / next-render endpoints, or when the element is an answer/article/comment,
+  // never drop the whole element because of adjson/ad_info; let clean() strip those fields instead.
+  if (IS_ANSWER_LIST_URL || isNormalContentItem(item)) {
+    return false;
+  }
+
+  // 4) On feed endpoints (like topstory/recommend), drop feed cards that carry ad markers
   for (const k of AD_MARKER_KEYS) {
     if (nonEmpty(item[k])) return true;
   }
   if (nonEmpty(item.ad_info) && typeof item.ad_info === "object") return true;
   if (item.is_ad === true || item.isAd === true || item.is_promotion === true) return true;
-
-  // 3) The "brief" field is a JSON string, for example {"source":"ad","type":"..."}
-  if (typeof item.brief === "string" && /"(type|source)"\s*:\s*"(ad|advert|feed_advert)"/i.test(item.brief)) {
-    return true;
-  }
 
   return false;
 }
@@ -107,7 +140,7 @@ function clean(node, depth) {
     $done({ body: JSON.stringify(cleaned) });
   } catch (e) {
     // Not JSON, or parsing failed: pass the response through unchanged
-    console.log("[Zhihu AdBlock] skip: " + ($request ? $request.url : "") + " -> " + e);
+    console.log("[Zhihu AdBlock] skip: " + REQ_URL + " -> " + e);
     $done({});
   }
 })();
