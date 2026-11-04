@@ -18,10 +18,10 @@ AND,((DST-PORT,443),(PROTOCOL,UDP),(DOMAIN-SUFFIX,zhimg.com)),REJECT-NO-DROP
 AND,((DST-PORT,443),(PROTOCOL,UDP)),REJECT-NO-DROP
 # Zhihu HTTPDNS. Blocking it makes the app fall back to normal DNS, so it connects by hostname
 # (api.zhihu.com) and MITM can take effect.
-# Current HTTPDNS, seen in the 2026-11-05 log as http://182.61.194.7/v2/resolv?host=...zhihu.com, plus its HTTPS siblings:
-IP-CIDR,182.61.194.7/32,REJECT,no-resolve
-IP-CIDR,182.61.194.9/32,REJECT,no-resolve
-IP-CIDR,182.61.194.10/32,REJECT,no-resolve
+# Current HTTPDNS, seen in the 2026-11-05 log as http://182.61.194.7/v2/resolv?host=...zhihu.com, plus its HTTPS/IPv6 siblings:
+IP-CIDR,182.61.194.0/24,REJECT,no-resolve
+IP-CIDR,106.13.244.173/32,REJECT,no-resolve
+IP-CIDR6,240c:409f::/32,REJECT,no-resolve
 # Older HTTPDNS addresses from community rule lists:
 IP-CIDR,118.89.204.198/32,REJECT,no-resolve
 IP-CIDR6,2402:4e00:1200:ed00:0:9089:6dac:96b6/128,REJECT,no-resolve
@@ -64,7 +64,7 @@ DOMAIN-SUFFIX,miaozhen.com,REJECT
 
 [Script]
 # Remove ad cards from JSON responses: home feed, hot list, follow feed, question/answer pages, comments and search.
-zhihu-ads = type=http-response,pattern=^https?:\/\/api\.zhihu\.com\/(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|questions\/\d+\/feeds|v4\/questions\/\d+\/(answers|feeds)|next-(render|data|bff)|comment_v5|search_v3|v5\.1\/topics),requires-body=1,max-size=0,timeout=10,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/zhihu_ads.js
+zhihu-ads = type=http-response,pattern=^https?:\/\/(api|www)\.zhihu\.com\/(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|(api\/)?(v4\/)?questions\/\d+\/(answers|feeds)|(api\/)?(v4\/)?answers\/|next-(render|data|bff)|comment_v5|search_v3|v5\.1\/topics),requires-body=1,max-size=0,timeout=10,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/zhihu_ads.js
 
 [MITM]
 hostname = %APPEND% api.zhihu.com, www.zhihu.com
