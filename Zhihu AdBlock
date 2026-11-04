@@ -1,0 +1,70 @@
+#!name=知乎去广告 Zhihu AdBlock
+#!desc=Removes Zhihu splash ads, feed ads, hot-list ads, answer/comment-page ads and pop-ups. Requires HTTPS decryption (MITM) with a trusted CA certificate.
+#!author=You
+#!category=AdBlock
+#!homepage=https://www.zhihu.com
+
+# Before you use this module, replace the script-path URL in [Script] with the raw URL
+# where you host zhihu_ads.js (for example GitHub raw or Gist raw).
+
+[Rule]
+# Block QUIC (HTTP/3 over UDP) so Zhihu falls back to TCP/HTTPS, which MITM can decrypt.
+# The captured log shows Zhihu (for example www.zhihu.com) sending traffic over QUIC.
+# This rule format is taken from the user's own log, so Shadowrocket accepts it.
+AND,((DST-PORT,443),(PROTOCOL,UDP),(DOMAIN-SUFFIX,zhihu.com)),REJECT-NO-DROP
+AND,((DST-PORT,443),(PROTOCOL,UDP),(DOMAIN-SUFFIX,zhimg.com)),REJECT-NO-DROP
+# The log also shows QUIC going straight to bare IPs (e.g. 120.240.x.x). Domain rules can't catch that,
+# so this rule blocks QUIC for every app. Other apps fall back to TCP and keep working.
+AND,((DST-PORT,443),(PROTOCOL,UDP)),REJECT-NO-DROP
+# Zhihu HTTPDNS. Blocking it makes the app fall back to normal DNS, so it connects by hostname
+# (api.zhihu.com) and MITM can take effect.
+# Current HTTPDNS, seen in the 2026-11-05 log as http://182.61.194.7/v2/resolv?host=...zhihu.com, plus its HTTPS siblings:
+IP-CIDR,182.61.194.7/32,REJECT,no-resolve
+IP-CIDR,182.61.194.9/32,REJECT,no-resolve
+IP-CIDR,182.61.194.10/32,REJECT,no-resolve
+# Older HTTPDNS addresses from community rule lists:
+IP-CIDR,118.89.204.198/32,REJECT,no-resolve
+IP-CIDR6,2402:4e00:1200:ed00:0:9089:6dac:96b6/128,REJECT,no-resolve
+# Ad delivery and analytics domains
+DOMAIN,sugar.zhihu.com,REJECT
+DOMAIN,zhihu-web-analytics.zhihu.com,REJECT
+DOMAIN,crash2.zhihu.com,REJECT
+# Third-party ad SDKs and ad-tracking hosts seen in the captured logs (they serve or count splash ads)
+# Kuaishou ad network
+DOMAIN,open.kuaishouzt.com,REJECT
+DOMAIN,open.kwaizt.com,REJECT
+# ByteDance Pangolin
+DOMAIN-SUFFIX,pangolin-sdk-toutiao.com,REJECT
+DOMAIN-SUFFIX,pangolin-sdk-toutiao1.com,REJECT
+DOMAIN-SUFFIX,pglstatp-toutiao.com,REJECT
+# Alibaba Tanx
+DOMAIN-SUFFIX,tanx.com,REJECT
+DOMAIN,tanx-creative.taobao.com,REJECT
+# Ad impression and tracking
+DOMAIN-SUFFIX,ad.xelements.cn,REJECT
+DOMAIN-SUFFIX,miaozhen.com,REJECT
+
+[URL Rewrite]
+# ---------- HTTPDNS over plain HTTP (no MITM needed). Catches the lookup even if Zhihu moves to another IP. ----------
+^http:\/\/\d+\.\d+\.\d+\.\d+\/v2\/resolv\?host= - reject
+# ---------- Splash / launch ads ----------
+^https?:\/\/api\.zhihu\.com\/commercial_api\/(launch_v2|real_time_launch_v2) - reject-dict
+^https?:\/\/api\.zhihu\.com\/launch\? - reject-dict
+# ---------- Floating layers, banners and pop-ups ----------
+^https?:\/\/api\.zhihu\.com\/commercial_api\/(app_float_layer|banners_v3) - reject-dict
+^https?:\/\/api\.zhihu\.com\/market\/popovers - reject-dict
+^https?:\/\/api\.zhihu\.com\/ad-style-service\/request - reject-dict
+^https?:\/\/api\.zhihu\.com\/brand\/question\/\d+\/card - reject-dict
+# ---------- Recommendation/ad cards under answers ----------
+^https?:\/\/(api|www)\.zhihu\.com\/(appview\/)?api\/v\d\/answers\/\d+\/recommendations - reject-dict
+# ---------- Ad tracking ----------
+^https?:\/\/api\.zhihu\.com\/(fringe|zst\/events) - reject-dict
+# ---------- Optional: remove the preset words in the search box (uncomment to enable) ----------
+# ^https?:\/\/api\.zhihu\.com\/search\/preset_words - reject-dict
+
+[Script]
+# Remove ad cards from JSON responses: home feed, hot list, follow feed, question/answer pages, comments and search.
+zhihu-ads = type=http-response,pattern=^https?:\/\/api\.zhihu\.com\/(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|questions\/\d+\/feeds|v4\/questions\/\d+\/(answers|feeds)|next-(render|data|bff)|comment_v5|search_v3|v5\.1\/topics),requires-body=1,max-size=0,timeout=10,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/zhihu_ads.js
+
+[MITM]
+hostname = %APPEND% api.zhihu.com, www.zhihu.com
