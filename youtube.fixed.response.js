@@ -8,7 +8,7 @@
 // End generated code.
 
   // Fixed options. Caption and lyric translation are off.
-  const hiddenGuideItems = new Set(["FEuploads", "FEmusic_immersive"]);
+  const hiddenGuideItems = new Set(["SPunlimited", "FEuploads", "FEmusic_immersive"]);
   const debug = false;
   const maxNonPlaybackBodyBytes = 4 * 1024 * 1024;
   const pipSettingId = 151;
