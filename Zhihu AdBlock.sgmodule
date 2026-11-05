@@ -27,14 +27,9 @@ IP-CIDR,118.89.204.198/32,REJECT,no-resolve
 IP-CIDR6,2402:4e00:1200:ed00:0:9089:6dac:96b6/128,REJECT,no-resolve
 # Ad delivery and analytics domains
 DOMAIN,sugar.zhihu.com,REJECT
-DOMAIN,duga.zhihu.com,REJECT
 DOMAIN,zhihu-web-analytics.zhihu.com,REJECT
 DOMAIN,crash2.zhihu.com,REJECT
-# Third-party ad SDKs and ad-tracking hosts seen in the captured logs (they serve or count splash and answer-bottom ads)
-# Tencent GDT (广点通 / 优量汇)
-DOMAIN-SUFFIX,gdt.qq.com,REJECT
-DOMAIN-SUFFIX,gdtimg.com,REJECT
-DOMAIN-SUFFIX,ugdtimg.com,REJECT
+# Third-party ad SDKs and ad-tracking hosts seen in the captured logs (they serve or count splash ads)
 # Kuaishou ad network
 DOMAIN,open.kuaishouzt.com,REJECT
 DOMAIN,open.kwaizt.com,REJECT
@@ -52,11 +47,11 @@ DOMAIN-SUFFIX,miaozhen.com,REJECT
 [URL Rewrite]
 # ---------- HTTPDNS over plain HTTP (no MITM needed). Catches the lookup even if Zhihu moves to another IP. ----------
 ^http:\/\/\d+\.\d+\.\d+\.\d+\/v2\/resolv\?host= - reject
-# ---------- All Zhihu commercial_api endpoints (splash ads, answer/bottom-v2 ads, float layers, banners) ----------
-^https?:\/\/api\.zhihu\.com\/commercial_api\/ - reject-dict
+# ---------- Splash / launch ads ----------
+^https?:\/\/api\.zhihu\.com\/commercial_api\/(launch_v2|real_time_launch_v2) - reject-dict
 ^https?:\/\/api\.zhihu\.com\/launch\? - reject-dict
-# ---------- Answer-page promotions, floating layers, banners and pop-ups ----------
-^https?:\/\/api\.zhihu\.com\/content-promotion\/ - reject-dict
+# ---------- Floating layers, banners and pop-ups ----------
+^https?:\/\/api\.zhihu\.com\/commercial_api\/(app_float_layer|banners_v3) - reject-dict
 ^https?:\/\/api\.zhihu\.com\/market\/popovers - reject-dict
 ^https?:\/\/api\.zhihu\.com\/ad-style-service\/ - reject-dict
 ^https?:\/\/api\.zhihu\.com\/brand\/question\/\d+\/card - reject-dict
@@ -71,7 +66,7 @@ DOMAIN-SUFFIX,miaozhen.com,REJECT
 
 [Script]
 # Remove ad cards from JSON responses: home feed, hot list, follow feed, question/answer pages, comments and search.
-zhihu-ads = type=http-response,pattern=^https?:\/\/(api|www)\.zhihu\.com\/((appview\/)?(api\/)?(v\d\/)?(feed\/)?(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|questions|answers|comment_v5|comments|next-(render|data|bff)|search_v3)|v5\.1\/topics|prague\/),requires-body=1,max-size=0,timeout=10,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/zhihu_ads.js?v=2
+zhihu-ads = type=http-response,pattern=^https?:\/\/(api|www)\.zhihu\.com\/(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|(appview\/)?(api\/)?(v\d\/)?(questions|answers|comment_v5|comments)\b|next-(render|data|bff)|search_v3|v5\.1\/topics|prague\/),requires-body=1,max-size=0,timeout=10,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/zhihu_ads.js
 
 [MITM]
 hostname = %APPEND% api.zhihu.com, www.zhihu.com
