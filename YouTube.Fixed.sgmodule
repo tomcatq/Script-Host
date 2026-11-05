@@ -1,14 +1,22 @@
-#!name=YouTube - Fixed
-#!desc=YouTube iOS ad filtering and background playback flags. Requires HTTPS Decryption and youtube.fixed.response.js.
+#!name=YouTube - Fixed (Playback Compatibility)
+#!desc=YouTube iOS ad filtering with the original media routing and playback flags. Requires HTTPS Decryption.
 #!author=Maasea (protobuf codecs); local Shadowrocket adaptation
 
 [Rule]
-# Send these API requests over TCP so Shadowrocket can decrypt them.
-AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT-NO-DROP
+# Restore TCP fallback for the media and API hosts used by the original module.
+AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP)),REJECT
 AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT-NO-DROP
 
+[URL Rewrite]
+(^https?:\/\/[\w-]+\.googlevideo\.com\/(?!dclk_video_ads).+?)&ctier=L(&.+?),ctier,(.+) $1$2$3 302
+^https?:\/\/[\w-]+\.googlevideo\.com\/(?!(dclk_video_ads|videoplayback\?)).+&oad _ reject-200
+^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads _ reject-200
+^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking) _ reject-200
+^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext _ reject-200
+
 [Script]
-youtube.fixed.response = type=http-response,pattern=^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(?:browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)(?:\?[^#]*)?$,requires-body=1,max-size=4194304,binary-body-mode=1,engine=webview,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/youtube.fixed.response.js
+youtube.fixed.response = type=http-response,pattern=^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(?:browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)(?:\?[^#]*)?$,requires-body=1,max-size=-1,binary-body-mode=1,engine=webview,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/youtube.fixed.response.js
 
 [MITM]
-hostname = %APPEND% youtubei.googleapis.com, youtubei-att.googleapis.com
+hostname = %APPEND% -redirector*.googlevideo.com, *.googlevideo.com, www.youtube.com, s.youtube.com, youtubei.googleapis.com, youtubei-att.googleapis.com
