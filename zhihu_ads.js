@@ -20,21 +20,92 @@ const IS_ANSWER_LIST_URL = /\/(next-(render|data|bff)|(appview\/)?(api\/)?(v\d\/
   REQ_URL
 );
 
-// Values of type, card_type, style, etc. that explicitly mark a standalone ad card
+// Values of type, card_type, style, biz_type, content_type, etc. that identify an ad card
 const AD_TYPE_RE =
-  /(^|[_\-])(ad|ads|advert|adverts|advertisement|promotion)([_\-]|$)|feed_advert|market_card|slot_(video_)?event_card|featured_comment_ad/i;
+  /(^|[_\-])(ad|ads|advert|adverts|advertisement|promotion|commercial|brand|sponsor|sponsored|ecommerce)([_\-]|$)|feed_advert|market_card|slot_(video_)?event_card|featured_comment_ad|ad_card|common_ad|commercial_card|brand_card/i;
 
-// Fields that appear on promoted feed cards (and sometimes as embedded ad data on answer objects)
-const AD_MARKER_KEYS = ["adjson", "promotion_extra", "ad_extra"];
+const TYPE_KEYS = [
+  "type",
+  "card_type",
+  "style",
+  "style_type",
+  "object_type",
+  "biz_type",
+  "biz_type_str",
+  "content_type",
+  "sub_type",
+  "feed_type",
+  "template_type",
+  "item_type",
+];
 
-// Ad-only fields to delete from any object we keep (such as answer-bottom ads or comment-page ad slots)
+// Keys whose non-empty presence inside a card (outside promotion_extra / ad_extra) marks an ad card
+const AD_CARD_KEYS = [
+  "adjson",
+  "za_ad_info",
+  "ad_drop_info",
+  "commercial_info",
+  "commercial_data",
+  "commercial_report",
+  "brand_info",
+  "ad_track_url",
+  "impression_tracks",
+  "view_tracks",
+  "click_tracks",
+  "conversion_tracks",
+  "autoplay_tracks",
+  "video_tracks",
+  "ad_zone_id",
+  "creative_id",
+  "advertiser_id",
+  "app_promotion_url",
+  "sk_ad_network",
+];
+
+// UI badge/label keys that display the "广告" mark on native/feed ad cards
+const BADGE_TEXT_KEYS = [
+  "label",
+  "badge",
+  "mark",
+  "sign",
+  "type_description",
+  "ad_source",
+  "sub_title",
+  "sub_text",
+  "tail_text",
+  "right_text",
+  "left_text",
+  "header_text",
+  "footer_text",
+  "tag",
+  "text",
+  "content",
+  "title",
+  "desc",
+  "description",
+];
+
+const AD_BADGE_VALUE_RE = /^[·•\s]*(广告|品牌广告|商业推广)[·•\s]*$/;
+
+// String patterns inside serialized sub-fields (e.g. brief, attached_info, render_data, tracking URLs)
+const AD_STRING_RE =
+  /"(adjson|za_ad_info|ad_drop_info|commercial_info|impression_tracks|click_tracks|conversion_tracks|ad_zone_id|creative_id|advertiser_id|sk_ad_network|app_promotion_url)"\s*:|"(type|source|biz_type|card_type|content_type|sub_type)"\s*:\s*"(ad|ads|advert|feed_advert|commercial|promotion|brand_ad|ad_card|market_card)"|"(label|badge|mark|sign|type_description|ad_source|tag|text|sub_title)"\s*:\s*"[·•\s]*(广告|品牌广告|商业推广)[·•\s]*"|(miaozhen\.com|xelements\.cn|gdt\.qq\.com|ugdtimg\.com|gdtimg\.com|tanx\.com|pangolin-sdk-toutiao|kuaishouzt\.com|kwaizt\.com)/i;
+
+// Ad-only fields to delete from any object we keep
 const AD_STRIP_KEYS = [
   "ad_info",
   "adjson",
+  "ad",
+  "ads",
   "ad_list",
+  "ad_drop_info",
+  "za_ad_info",
   "promotion_extra",
   "ad_extra",
   "commercial_info",
+  "commercial_data",
+  "commercial_report",
+  "brand_info",
   "mobile_banner",
   "ad_track_url",
   "featured_comment_ad",
@@ -50,6 +121,25 @@ function nonEmpty(v) {
 
 function typeLooksLikeAd(v) {
   return typeof v === "string" && AD_TYPE_RE.test(v);
+}
+
+function isRealAdInfo(v) {
+  if (!nonEmpty(v) || typeof v !== "object" || Array.isArray(v)) return false;
+  if (v.is_ad === false || v.ad_type === 0) return false;
+  return true;
+}
+
+function hasAdBadge(node) {
+  if (node.type === "topic" || node.type === "people" || "url_token" in node || "avatar_url" in node || "question" in node) {
+    return false;
+  }
+  for (const k of BADGE_TEXT_KEYS) {
+    const v = node[k];
+    if (typeof v === "string" && v.length <= 12 && AD_BADGE_VALUE_RE.test(v)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isNormalContentItem(item) {
@@ -70,43 +160,62 @@ function isNormalContentItem(item) {
   return false;
 }
 
-function isAd(item) {
-  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+// Recursively inspects a candidate feed/render card (up to depth 7) for ad signatures,
+// while skipping promotion_extra / ad_extra so normal answers in next-render are never dropped.
+function containsAdMarker(node, depth) {
+  if (depth > 7 || !node || typeof node !== "object") return false;
 
-  // 1) Type-like fields that explicitly identify a standalone ad card
-  if (
-    typeLooksLikeAd(item.type) ||
-    typeLooksLikeAd(item.card_type) ||
-    typeLooksLikeAd(item.style) ||
-    typeLooksLikeAd(item.object_type) ||
-    typeLooksLikeAd(item.biz_type)
-  ) {
-    return true;
-  }
-  if (item.extra && typeof item.extra === "object" && typeLooksLikeAd(item.extra.type)) {
-    return true;
-  }
-  if (item.target && typeof item.target === "object" && typeLooksLikeAd(item.target.type)) {
-    return true;
-  }
-
-  // 2) The "brief" field is a JSON string, for example {"source":"ad","type":"..."}
-  if (typeof item.brief === "string" && /"(type|source)"\s*:\s*"(ad|advert|feed_advert)"/i.test(item.brief)) {
-    return true;
-  }
-
-  // 3) On answer-list / next-render endpoints, or when the element is an answer/article/comment,
-  // never drop the whole element because of adjson/ad_info; let clean() strip those fields instead.
-  if (IS_ANSWER_LIST_URL || isNormalContentItem(item)) {
+  if (Array.isArray(node)) {
+    for (const el of node) {
+      if (typeof el === "string" && AD_STRING_RE.test(el)) return true;
+      if (el && typeof el === "object" && containsAdMarker(el, depth + 1)) return true;
+    }
     return false;
   }
 
-  // 4) On feed endpoints (like topstory/recommend), drop feed cards that carry ad markers
-  for (const k of AD_MARKER_KEYS) {
-    if (nonEmpty(item[k])) return true;
+  for (const k of TYPE_KEYS) {
+    if (typeLooksLikeAd(node[k])) return true;
   }
-  if (nonEmpty(item.ad_info) && typeof item.ad_info === "object") return true;
-  if (item.is_ad === true || item.isAd === true || item.is_promotion === true) return true;
+
+  if (node.is_ad === true || node.isAd === true || node.is_commercial === true) return true;
+  if (isRealAdInfo(node.ad_info)) return true;
+  if (nonEmpty(node.ad) && typeof node.ad === "object") return true;
+  if (Array.isArray(node.ads) && node.ads.length > 0) return true;
+
+  for (const k of AD_CARD_KEYS) {
+    if (nonEmpty(node[k])) return true;
+  }
+
+  if (hasAdBadge(node)) return true;
+
+  for (const k of Object.keys(node)) {
+    // Normal answers in next-render carry promotion_extra / ad_extra; do not use them to drop answers
+    if (k === "promotion_extra" || k === "ad_extra") continue;
+    const v = node[k];
+    if (typeof v === "string") {
+      if (v.length > 6 && AD_STRING_RE.test(v)) return true;
+    } else if (v && typeof v === "object") {
+      if (containsAdMarker(v, depth + 1)) return true;
+    }
+  }
+
+  return false;
+}
+
+function isAd(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+
+  // 1) Check the card and its nested structure (e.g. next-render native cards, question feeds, home feed)
+  if (containsAdMarker(item, 0)) {
+    return true;
+  }
+
+  // 2) On pure feed endpoints (like topstory/recommend), also drop non-content cards with promotion_extra / ad_extra
+  if (!IS_ANSWER_LIST_URL && !isNormalContentItem(item)) {
+    if (nonEmpty(item.promotion_extra) || nonEmpty(item.ad_extra) || item.is_promotion === true) {
+      return true;
+    }
+  }
 
   return false;
 }
@@ -117,7 +226,8 @@ function clean(node, depth) {
   if (Array.isArray(node)) {
     const out = [];
     for (const el of node) {
-      if (isAd(el)) continue;
+      // Only drop whole card elements at the feed/list level (depth <= 3)
+      if (depth <= 3 && isAd(el)) continue;
       out.push(clean(el, depth + 1));
     }
     return out;
