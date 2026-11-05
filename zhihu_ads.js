@@ -12,6 +12,7 @@
 const MAX_DEPTH = 15;
 
 const REQ_URL = typeof $request !== "undefined" && $request && $request.url ? $request.url : "";
+const IS_NEXT_ANSWER_URL = /^https?:\/\/api\.zhihu\.com\/next-render\?(?:[^#]*&)?type=answer(?:[&#]|$)/i.test(REQ_URL);
 
 // Endpoints that return lists of answers, questions, or comments.
 // On these endpoints we must NOT drop answer/comment elements from arrays just because they
@@ -111,6 +112,22 @@ function isAd(item) {
   return false;
 }
 
+function isNextAnswerAd(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  if (isAd(item) || item.is_ad === true || item.isAd === true || item.is_promotion === true) return true;
+
+  const types = item.biz_type_list;
+  if (Array.isArray(types) && types.some(typeLooksLikeAd)) return true;
+
+  // Recognized answer rows can carry embedded ad fields. Keep the row so swiping works.
+  if (Array.isArray(types) && types.includes("answer")) return false;
+  if (isNormalContentItem(item.target || {}) || isNormalContentItem(item.data || {})) return false;
+  if (isNormalContentItem(item) && (nonEmpty(item.content) || nonEmpty(item.excerpt))) return false;
+
+  // These markers identify ad rows in the top-level next-render answer stream.
+  return nonEmpty(item.adjson) || nonEmpty(item.ad_info && item.ad_info.data);
+}
+
 function clean(node, depth) {
   if (depth > MAX_DEPTH || node === null || typeof node !== "object") return node;
 
@@ -138,13 +155,18 @@ function clean(node, depth) {
   if (!body) return $done({});
   try {
     const obj = JSON.parse(body);
+    if (IS_NEXT_ANSWER_URL && obj && Array.isArray(obj.data)) {
+      const before = obj.data.length;
+      obj.data = obj.data.filter((item) => !isNextAnswerAd(item));
+      console.log("[Zhihu AdBlock] next-render answers: removed " + (before - obj.data.length) + " ad rows");
+    }
     const cleaned = clean(obj, 0);
     // Also neutralize any "adjson" hidden inside stringified JSON sub-fields
     const out = JSON.stringify(cleaned).replace(/"adjson"/g, '"adnull"');
     $done({ body: out });
   } catch (e) {
     // Not JSON, or parsing failed: pass the response through unchanged
-    console.log("[Zhihu AdBlock] skip: " + REQ_URL + " -> " + e);
+    console.log("[Zhihu AdBlock] " + (IS_NEXT_ANSWER_URL ? "next-render answers: " : "") + "response passed through after a parse or rewrite error");
     $done({});
   }
 })();
