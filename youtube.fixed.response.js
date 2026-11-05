@@ -10,7 +10,7 @@
   // Fixed options. Caption and lyric translation are off.
   const hiddenGuideItems = new Set(["FEuploads", "FEmusic_immersive"]);
   const debug = false;
-  const maxBodyBytes = 4 * 1024 * 1024;
+  const maxNonPlaybackBodyBytes = 4 * 1024 * 1024;
   const pipSettingId = 151;
   const pipCategoryId = 10135;
   const adMarkers = ["/pagead/", "pagead2.googlesyndication.com"].map(marker =>
@@ -27,6 +27,7 @@
     ["account/get_setting", [Qr, patchSettings]],
     ["get_watch", [ei, patchWatch]]
   ]);
+  const playbackRoutes = new Set(["player", "get_watch", "account/get_setting"]);
 
   function removeMatching(items, predicate) {
     let changed = false;
@@ -110,19 +111,12 @@
     const status = player.playabilityStatus;
     if (!status) return changed;
 
-    // Keep fields the server already sent inside each renderer and ability.
-    if (!status.backgroundPlayerRender?.backgroundAbility?.active) {
-      hn.mergePartial(status, { backgroundPlayerRender: { backgroundAbility: { active: true } } });
-      changed = true;
-    }
-    if (!status.pictureInPictureRender?.pictureInPictureAbility?.active) {
-      const ability = status.pictureInPictureRender?.pictureInPictureAbility;
-      hn.mergePartial(status, {
-        pictureInPictureRender: { pictureInPictureAbility: { active: true, f8: ability?.f8 || 1 } }
-      });
-      changed = true;
-    }
-    return changed;
+    // Match the original script's complete renderer values on the working playback path.
+    status.backgroundPlayerRender = ge.create({ backgroundAbility: { active: true } });
+    status.pictureInPictureRender = me.create({
+      pictureInPictureAbility: { active: true, f4: 0, f6: 0, f8: 1 }
+    });
+    return true;
   }
 
   function patchWatch(message) {
@@ -136,14 +130,18 @@
 
   function patchSettings(message) {
     const items = [...message.settingItems, ...message.collectionItems];
-    if (!items.length) return false;
-
     let changed = false;
     const background = items.find(item => item.backgroundPlayBackSettingRenderer)
       ?.backgroundPlayBackSettingRenderer;
     if (!background) {
       message.settingItems.push(_.create({
-        backgroundPlayBackSettingRenderer: { backgroundPlayback: true, icon: { iconType: 1093 } }
+        backgroundPlayBackSettingRenderer: {
+          backgroundPlayback: true,
+          download: true,
+          downloadQualitySelection: true,
+          smartDownload: true,
+          icon: { iconType: 1093 }
+        }
       }));
       changed = true;
     } else if (!background.backgroundPlayback) {
@@ -178,24 +176,34 @@
     const route = match && routes.get(match[1]);
     if (!route || !response) return {};
 
+    const routeName = match[1];
+    const isPlaybackRoute = playbackRoutes.has(routeName);
+    if (debug) console.log(`YouTube Fixed: ${routeName} matched`);
+
     const status = response.status ?? response.statusCode;
     if (status != null && !/^(?:HTTP\/\d+(?:\.\d+)?\s+)?200(?:\s.*)?$/i.test(String(status))) return {};
 
     const headers = response.headers ?? {};
     const typeKey = Object.keys(headers).find(key => key.toLowerCase() === "content-type");
-    const type = typeKey && String(headers[typeKey]).split(";", 1)[0].trim();
-    if (type && !/^application\/(?:x-protobuf|protobuf|x-protobuffer|vnd\.google\.protobuf|octet-stream)$/i.test(type)) return {};
+    const type = typeKey && String(headers[typeKey]).split(";", 1)[0].trim().toLowerCase();
+    if (type) {
+      const isProtobuf = /^application\/(?:x-protobuf|protobuf|x-protobuffer|vnd\.google\.protobuf|octet-stream)$/.test(type);
+      const isTextOrFramed = /^text\/|\bjson\b|\bxml\b|^application\/grpc/.test(type);
+      if (isTextOrFramed || (!isProtobuf && !isPlaybackRoute)) return {};
+    }
 
-    const raw = response.bodyBytes ?? response.body;
+    const body = response.body;
+    const raw = ArrayBuffer.isView(body) || body instanceof ArrayBuffer ? body : response.bodyBytes;
     const bytes = ArrayBuffer.isView(raw)
       ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
       : raw instanceof ArrayBuffer ? new Uint8Array(raw) : null;
-    if (!bytes?.length || bytes.length > maxBodyBytes || (bytes[0] === 0x1f && bytes[1] === 0x8b)) return {};
+    if (!bytes?.length || (bytes[0] === 0x1f && bytes[1] === 0x8b)) return {};
+    if (!isPlaybackRoute && bytes.length > maxNonPlaybackBodyBytes) return {};
 
     const [codec, edit] = route;
     const message = codec.fromBinary(bytes);
     const changed = edit(message);
-    if (debug) console.log(`YouTube Fixed: ${match[1]} ${changed ? "edited" : "passed through"}`);
+    if (debug) console.log(`YouTube Fixed: ${routeName} ${changed ? "edited" : "passed through"}`);
     return changed ? { body: codec.toBinary(message) } : {};
   }
 
