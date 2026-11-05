@@ -1,11 +1,11 @@
-#!name=知乎去广告 Zhihu AdBlock
-#!desc=Removes Zhihu splash ads, feed ads, hot-list ads, answer/comment-page ads and pop-ups. Requires HTTPS decryption (MITM) with a trusted CA certificate.
+#!name=知乎去广告 Zhihu AdBlock (Answer List Fix)
+#!desc=Removes Zhihu splash, feed, hot-list and answer-list ads. Requires HTTPS decryption (MITM) with a trusted CA certificate.
 #!author=You
 #!category=AdBlock
 #!homepage=https://www.zhihu.com
 
-# Before you use this module, replace the script-path URL in [Script] with the raw URL
-# where you host zhihu_ads.js (for example GitHub raw or Gist raw).
+# Install the updated zhihu_ads.js at the script-path below or set script-path to
+# zhihu_ads.js after saving the updated script in Shadowrocket's local script picker.
 
 [Rule]
 # Block QUIC (HTTP/3 over UDP) so Zhihu falls back to TCP/HTTPS, which MITM can decrypt.
