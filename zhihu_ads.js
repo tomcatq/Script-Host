@@ -13,6 +13,7 @@ const MAX_DEPTH = 15;
 
 const REQ_URL = typeof $request !== "undefined" && $request && $request.url ? $request.url : "";
 const IS_NEXT_ANSWER_URL = /^https?:\/\/api\.zhihu\.com\/next-render\?(?:[^#]*&)?type=answer(?:[&#]|$)/i.test(REQ_URL);
+const IS_ANSWER_DETAIL_URL = /^https?:\/\/api\.zhihu\.com\/answers\/v2\/\d+(?:[?#]|$)/i.test(REQ_URL);
 
 // Endpoints that return lists of answers, questions, or comments.
 // On these endpoints we must NOT drop answer/comment elements from arrays just because they
@@ -155,6 +156,11 @@ function clean(node, depth) {
   if (!body) return $done({});
   try {
     const obj = JSON.parse(body);
+    // The native answer detail carries the card between the answer and comments here.
+    if (IS_ANSWER_DETAIL_URL && obj && Object.prototype.hasOwnProperty.call(obj, "third_business")) {
+      delete obj.third_business;
+      console.log("[Zhihu AdBlock] answer detail: removed third_business");
+    }
     if (IS_NEXT_ANSWER_URL && obj && Array.isArray(obj.data)) {
       const before = obj.data.length;
       obj.data = obj.data.filter((item) => !isNextAnswerAd(item));
