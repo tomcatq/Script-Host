@@ -71,7 +71,7 @@ DOMAIN-SUFFIX,miaozhen.com,REJECT
 
 [Script]
 # Remove ad cards from JSON responses: home feed, hot list, follow feed, question/answer pages, comments and search.
-zhihu-ads = type=http-response,pattern=^https?:\/\/(api|www)\.zhihu\.com\/(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|(appview\/)?(api\/)?(v\d\/)?(questions|answers|comment_v5|comments)\b|next-(render|data|bff)|search_v3|v5\.1\/topics|prague\/),requires-body=1,max-size=0,timeout=10,script-path=https://raw.githubusercontent.com/YOUR_GITHUB_USER/YOUR_REPO/main/zhihu_ads.js
+zhihu-ads = type=http-response,pattern=^https?:\/\/(api|www)\.zhihu\.com\/((appview\/)?(api\/)?(v\d\/)?(feed\/)?(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|questions|answers|comment_v5|comments|next-(render|data|bff)|search_v3)|v5\.1\/topics|prague\/),requires-body=1,max-size=0,timeout=10,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/zhihu_ads.js?v=2
 
 [MITM]
 hostname = %APPEND% api.zhihu.com, www.zhihu.com
