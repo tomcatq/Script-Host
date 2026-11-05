@@ -1,0 +1,18 @@
+#!name=Splash Ads · Amap, Douban, Coolapk
+#!desc=Filters known launch-ad routes for 高德地图, 豆瓣 and 酷安. Requires HTTPS decryption.
+#!category=AdBlock
+
+[URL Rewrite]
+# Amap (高德地图)
+^https?://m5\.amap\.com/ws/valueadded/alimama/splash_screen/?(?:\?|$) - reject-dict
+^https?://amap-aos-info-nogw\.amap\.com/ws/aos/alimama/splash_screen(?:_rt)?/?(?:\?|$) - reject-dict
+
+# Douban (豆瓣)
+^https?://api\.douban\.com/v2/app_ads/splash(?:_show)?/?(?:\?|$) - reject-dict
+
+[Script]
+# Set script-path to the raw GitHub URL of your uploaded copy.
+coolapk-splash = type=http-response,pattern=^https?://api\.coolapk\.com/v6/main/init/?(?:\?|$),requires-body=1,max-size=1048576,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/Splash-Ads.js
+
+[MITM]
+hostname = %APPEND% m5.amap.com, amap-aos-info-nogw.amap.com, api.douban.com, api.coolapk.com
