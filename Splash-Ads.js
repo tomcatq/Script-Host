@@ -6,10 +6,10 @@ const requestFilters = [
   },
   {
     pattern: /^http:\/\/[^/]+\/amdc\/mobileDispatch(?:[/?]|$)/,
-    mock: blockAmapMobileDispatch,
+    mock: blockMobileDispatch,
   },
   {
-    pattern: /^https?:\/\/api\.douban\.com\/v[0-9]+\/app_ads(?:[/?]|$)/,
+    pattern: /^https?:\/\/api\.douban\.com\/(?:v[0-9]+\/app_ads(?:[/?]|$)|(?:[^/?]+\/)*ad\/)/,
     mock: emptyJsonResponse,
   },
   {
@@ -20,7 +20,7 @@ const requestFilters = [
 
 const responseFilters = [
   {
-    pattern: /^https?:\/\/netflow-mtop\.cainiao\.com\/gw\/mtop\.cainiao\.guoguo\.nbnetflow\.ads\.m?show(?:\.cn)?(?:[/?]|$)/,
+    pattern: /^https?:\/\/netflow-mtop\.cainiao\.com\/gw\/mtop\.cainiao\.guoguo\.nbnetflow\.ads(?:[./?]|$)/,
     rewrite: rewriteCainiaoNetflow,
   },
   {
@@ -39,10 +39,10 @@ function emptyJsonResponse() {
   };
 }
 
-function blockAmapMobileDispatch(request) {
+function blockMobileDispatch(request) {
   const headers = request.headers || {};
   const userAgent = Object.keys(headers).find((key) => key.toLowerCase() === "user-agent");
-  if (!/^AMapiPhone/i.test(headers[userAgent] || "")) return {};
+  if (!/^(?:AMapiPhone|Cainiao4iPhone)/i.test(headers[userAgent] || "")) return {};
 
   return { response: { status: 404, headers: {}, body: "" } };
 }
@@ -59,10 +59,13 @@ function parseJson(text) {
 
 function rewriteCainiaoNetflow(body) {
   const payload = parseJson(body);
-  const results = payload?.data?.result;
-  if (!Array.isArray(results) || results.length === 0) return {};
+  const data = payload?.data;
+  if (!data || typeof data !== "object" || Array.isArray(data) || !Object.keys(data).length) {
+    return {};
+  }
 
   // Cainiao also uses this response for a settings item with material ID 39017.
+  const results = Array.isArray(data.result) ? data.result : [data.result];
   if (results.some((item) => item?.materialId === "39017" || item?.materialId === 39017)) {
     return {};
   }
