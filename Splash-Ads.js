@@ -1,10 +1,51 @@
 // Keep each matcher in sync with its [Script] entry in Splash-Ads.sgmodule.
+const requestFilters = [
+  {
+    pattern: /^https?:\/\/(?:(?:m[0-9]|m5-zb)\.amap\.com\/ws\/(?:valueadded\/alimama\/splash_screen|shield\/dsp\/app\/startup\/init)|amap-aos-info-nogw\.amap\.com\/ws\/aos\/alimama\/splash_screen(?:_rt)?)(?:[/?]|$)/,
+    mock: emptyJsonResponse,
+  },
+  {
+    pattern: /^http:\/\/[^/]+\/amdc\/mobileDispatch(?:[/?]|$)/,
+    mock: blockAmapMobileDispatch,
+  },
+  {
+    pattern: /^https?:\/\/api\.douban\.com\/v[0-9]+\/app_ads(?:[/?]|$)/,
+    mock: emptyJsonResponse,
+  },
+  {
+    pattern: /^https?:\/\/cn-acs\.m\.cainiao\.com\/gw\/mtop\.cainiao\.guoguo\.(?:nbnetflow\.)?ads\.m?show(?:\.cn)?(?:[/?]|$)/,
+    mock: () => ({ response: { status: 200, headers: {}, body: "" } }),
+  },
+];
+
 const responseFilters = [
+  {
+    pattern: /^https?:\/\/netflow-mtop\.cainiao\.com\/gw\/mtop\.cainiao\.guoguo\.nbnetflow\.ads\.m?show(?:\.cn)?(?:[/?]|$)/,
+    rewrite: rewriteCainiaoNetflow,
+  },
   {
     pattern: /^https?:\/\/api\.coolapk\.com\/v6\/main\/init\/?(?:\?|$)/,
     rewrite: rewriteCoolapkStartup,
   },
 ];
+
+function emptyJsonResponse() {
+  return {
+    response: {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      body: "{}",
+    },
+  };
+}
+
+function blockAmapMobileDispatch(request) {
+  const headers = request.headers || {};
+  const userAgent = Object.keys(headers).find((key) => key.toLowerCase() === "user-agent");
+  if (!/^AMapiPhone/i.test(headers[userAgent] || "")) return {};
+
+  return { response: { status: 404, headers: {}, body: "" } };
+}
 
 function parseJson(text) {
   if (typeof text !== "string") return undefined;
@@ -14,6 +55,20 @@ function parseJson(text) {
   } catch {
     return undefined;
   }
+}
+
+function rewriteCainiaoNetflow(body) {
+  const payload = parseJson(body);
+  const results = payload?.data?.result;
+  if (!Array.isArray(results) || results.length === 0) return {};
+
+  // Cainiao also uses this response for a settings item with material ID 39017.
+  if (results.some((item) => item?.materialId === "39017" || item?.materialId === 39017)) {
+    return {};
+  }
+
+  payload.data = {};
+  return { body: JSON.stringify(payload) };
 }
 
 function removeCoolapkSplashSettings(config) {
@@ -54,5 +109,10 @@ function rewriteCoolapkStartup(body) {
   return { body: JSON.stringify(payload) };
 }
 
-const filter = responseFilters.find(({ pattern }) => pattern.test($request.url));
-$done(filter ? filter.rewrite($response.body) : {});
+if (typeof $response === "undefined") {
+  const filter = requestFilters.find(({ pattern }) => pattern.test($request.url));
+  $done(filter ? filter.mock($request) : {});
+} else {
+  const filter = responseFilters.find(({ pattern }) => pattern.test($request.url));
+  $done(filter ? filter.rewrite($response.body) : {});
+}
