@@ -1,18 +1,28 @@
-#!name=Splash Ads · Amap, Douban, Coolapk
-#!desc=Filters known launch-ad routes for 高德地图, 豆瓣 and 酷安. Requires HTTPS decryption.
+#!name=Splash Ads · Amap, Douban, Coolapk, Cainiao
+#!desc=Filters launch ads for 高德地图, 豆瓣, 酷安 and 菜鸟. Requires HTTPS decryption.
 #!category=AdBlock
 
-[URL Rewrite]
-# Amap (高德地图)
-^https?://m5\.amap\.com/ws/valueadded/alimama/splash_screen/?(?:\?|$) - reject-dict
-^https?://amap-aos-info-nogw\.amap\.com/ws/aos/alimama/splash_screen(?:_rt)?/?(?:\?|$) - reject-dict
+[Rule]
+# Prefer TCP on the ad API hosts so Shadowrocket can apply the HTTPS filters.
+AND,((DOMAIN-WILDCARD,m*.amap.com),(DST-PORT,443),(PROTOCOL,UDP)),REJECT-NO-DROP
+AND,((DOMAIN,amap-aos-info-nogw.amap.com),(DST-PORT,443),(PROTOCOL,UDP)),REJECT-NO-DROP
+AND,((DOMAIN,api.douban.com),(DST-PORT,443),(PROTOCOL,UDP)),REJECT-NO-DROP
+AND,((DOMAIN,cn-acs.m.cainiao.com),(DST-PORT,443),(PROTOCOL,UDP)),REJECT-NO-DROP
+AND,((DOMAIN,netflow-mtop.cainiao.com),(DST-PORT,443),(PROTOCOL,UDP)),REJECT-NO-DROP
 
-# Douban (豆瓣)
-^https?://api\.douban\.com/v2/app_ads/splash(?:_show)?/?(?:\?|$) - reject-dict
+[URL Rewrite]
+# Douban ad assets can be fetched separately from the API.
+^https?://(?:img[1239]|qnmob3)\.doubanio\.com/view/dale-online/dale_ad/ - reject
+^https?://storage\.360buyimg\.com/material-video/video/[a-f0-9]{32}\.mp4(?:\?|$) - reject
 
 [Script]
-# Set script-path to the raw GitHub URL of your uploaded copy.
-coolapk-splash = type=http-response,pattern=^https?://api\.coolapk\.com/v6/main/init/?(?:\?|$),requires-body=1,max-size=1048576,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/Splash-Ads.js
+# All handlers share the same script on GitHub.
+amap-splash = type=http-request,pattern=^https?://(?:(?:m[0-9]|m5-zb)\.amap\.com/ws/(?:valueadded/alimama/splash_screen|shield/dsp/app/startup/init)|amap-aos-info-nogw\.amap\.com/ws/aos/alimama/splash_screen(?:_rt)?)(?:[/?]|$),script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/Splash-Ads.js?v=2
+amap-mobile-dispatch = type=http-request,pattern=^http://[^/]+/amdc/mobileDispatch(?:[/?]|$),script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/Splash-Ads.js?v=2
+douban-splash = type=http-request,pattern=^https?://api\.douban\.com/v[0-9]+/app_ads(?:[/?]|$),script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/Splash-Ads.js?v=2
+cainiao-splash = type=http-request,pattern=^https?://cn-acs\.m\.cainiao\.com/gw/mtop\.cainiao\.guoguo\.(?:nbnetflow\.)?ads\.m?show(?:\.cn)?(?:[/?]|$),script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/Splash-Ads.js?v=2
+cainiao-netflow-splash = type=http-response,pattern=^https?://netflow-mtop\.cainiao\.com/gw/mtop\.cainiao\.guoguo\.nbnetflow\.ads\.m?show(?:\.cn)?(?:[/?]|$),requires-body=1,max-size=1048576,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/Splash-Ads.js?v=2
+coolapk-splash = type=http-response,pattern=^https?://api\.coolapk\.com/v6/main/init/?(?:\?|$),requires-body=1,max-size=1048576,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/Splash-Ads.js?v=2
 
 [MITM]
-hostname = %APPEND% m5.amap.com, amap-aos-info-nogw.amap.com, api.douban.com, api.coolapk.com
+hostname = %APPEND% m0.amap.com, m1.amap.com, m2.amap.com, m3.amap.com, m4.amap.com, m5.amap.com, m6.amap.com, m7.amap.com, m8.amap.com, m9.amap.com, m5-zb.amap.com, amap-aos-info-nogw.amap.com, api.douban.com, img1.doubanio.com, img2.doubanio.com, img3.doubanio.com, img9.doubanio.com, qnmob3.doubanio.com, storage.360buyimg.com, cn-acs.m.cainiao.com, netflow-mtop.cainiao.com, api.coolapk.com
