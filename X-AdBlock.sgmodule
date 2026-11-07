@@ -1,7 +1,0 @@
-#!name=X (Twitter) AdBlock v2
-#!desc=Filters standalone promoted posts on X API hosts you explicitly add to HTTPS Decryption.
-#!category=AdBlock
-# Keep transport and TLS settings in the active configuration. See the README.
-
-[Script]
-x-adblock = type=http-response,pattern=^https:\/\/api\.(?:x|twitter)\.com\/(?:graphql\/[A-Za-z0-9_-]+\/(?:HomeTimeline(?:Latest)?|HomeLatestTimeline|ConversationTimeline(?:V2)?|TweetDetail|SearchTimeline(?:Query)?|Profile(?:WithReplies)?Timeline|UserTweets(?:AndReplies)?|ListLatestTweetsTimeline)|2\/(?:timeline\/(?:home(?:_latest)?|conversation\/[0-9]+|profile\/[0-9]+)|search\/adaptive)\.json)(?:\?[^#]*)?$,requires-body=1,max-size=4194304,timeout=5,engine=webview,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/x-adblock.js?v=2
