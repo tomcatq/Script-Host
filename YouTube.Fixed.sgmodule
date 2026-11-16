@@ -1,4 +1,4 @@
-#!name=YouTube - Fixed (Playback Compatibility)
+#!name=YouTube - Fixed (Stability Update)
 #!desc=YouTube iOS ad filtering with the original media routing and playback flags. Requires HTTPS Decryption.
 #!author=Maasea (protobuf codecs); local Shadowrocket adaptation
 
@@ -16,7 +16,8 @@ AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT-
 ^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext _ reject-200
 
 [Script]
-youtube.fixed.response = type=http-response,pattern=^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(?:browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)(?:\?[^#]*)?$,requires-body=1,max-size=-1,binary-body-mode=1,engine=webview,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/youtube.fixed.response.js
+# Limit response buffering before the body reaches the script.
+youtube.fixed.response = type=http-response,pattern=^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(?:browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)(?:\?[^#]*)?$,requires-body=1,max-size=1048576,binary-body-mode=1,engine=webview,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/youtube.fixed.response.js
 
 [MITM]
 hostname = %APPEND% -redirector*.googlevideo.com, *.googlevideo.com, www.youtube.com, s.youtube.com, youtubei.googleapis.com, youtubei-att.googleapis.com
