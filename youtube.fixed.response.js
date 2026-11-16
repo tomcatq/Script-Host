@@ -1,5 +1,5 @@
 // Shadowrocket response adapter. Based on Maasea/sgmodule (Apache-2.0).
-// Modified 2026-11-06. The generated protobuf codecs below come from:
+// Modified 2026-11-17. Revision playback-repair-2. The generated protobuf codecs below come from:
 // https://github.com/Maasea/sgmodule/blob/65075cdb388fc5e3094afd7e7314c67b243f3525/Script/Youtube/youtube.response.js
 // See the accompanying LICENSE.
 // Begin generated protobuf runtime and codecs (Maasea build 2026/7/19).
@@ -19,26 +19,106 @@
   );
 
   const routes = new Map([
-    ["browse", [qr, filterFeed]],
-    ["next", [re, filterFeed]],
-    ["player", [oe, patchPlayer]],
-    ["search", [Yr, filterFeed]],
+    ["browse", [qr]],
+    ["next", [re]],
+    ["player", [oe]],
+    ["search", [Yr]],
     ["reel/reel_watch_sequence", [zr, filterShorts]],
     ["guide", [Zr, filterGuide]],
     ["account/get_setting", [Qr, patchSettings]],
-    ["get_watch", [ei, patchWatch]]
+    ["get_watch", [ei]]
   ]);
   const playbackRoutes = new Set(["player", "get_watch", "account/get_setting"]);
 
   // Small repeated fields can expand into many JavaScript objects during decoding.
   class BoundedBinaryReader extends Ke {
-    remainingTags = maxFieldTags;
+    constructor(bytes, budget = { remainingTags: maxFieldTags }) {
+      super(bytes);
+      this.budget = budget;
+    }
 
     tag() {
-      this.remainingTags -= 1;
-      if (this.remainingTags < 0) throw new RangeError("Protobuf field limit exceeded");
+      this.budget.remainingTags -= 1;
+      if (this.budget.remainingTags < 0) throw new RangeError("Protobuf field limit exceeded");
       return super.tag();
     }
+  }
+
+  // Copy untouched fields directly, allocating a writer only when a field changes.
+  // null removes a selected field. Returning its original bytes keeps it verbatim.
+  function rewriteBinaryFields(bytes, edits, budget) {
+    const reader = new BoundedBinaryReader(bytes, budget);
+    let writer;
+    let copiedUntil = 0;
+    while (reader.pos < reader.len) {
+      const start = reader.pos;
+      const [number, wireType] = reader.tag();
+      const edit = edits.get(number);
+      if (!edit || wireType !== 2) {
+        reader.skip(wireType);
+        continue;
+      }
+      const payload = reader.bytes();
+      const replacement = edit(payload);
+      if (replacement === payload) continue;
+      writer ??= new He();
+      if (start > copiedUntil) writer.raw(bytes.subarray(copiedUntil, start));
+      if (replacement !== null) writer.tag(number, 2).bytes(replacement);
+      copiedUntil = reader.pos;
+    }
+    return writer ? writer.raw(bytes.subarray(copiedUntil)).finish() : bytes;
+  }
+
+  function rewritePlayerBytes(bytes, budget) {
+    return rewriteBinaryFields(bytes, new Map([
+      [7, () => null],
+      [68, () => null],
+      [2, payload => {
+        const status = hn.fromBinary(payload, { readerFactory: input => new BoundedBinaryReader(input, budget) });
+        setPlaybackAbilities(status);
+        return hn.toBinary(status);
+      }],
+      [9, payload => rewriteBinaryFields(payload, new Map([[18, () => null]]), budget)]
+    ]), budget);
+  }
+
+  function rewriteWatchBytes(bytes, budget) {
+    return rewriteBinaryFields(bytes, new Map([
+      [1, content => rewriteBinaryFields(content, new Map([
+        [2, player => rewritePlayerBytes(player, budget)],
+        [3, next => rewriteFeedBytes(next, re, budget)]
+      ]), budget)]
+    ]), budget);
+  }
+
+  function rewriteFeedBytes(bytes, codec, budget) {
+    // Follow only schema fields that lead to feed items. Page metadata stays in wire form.
+    const edits = new Map();
+    for (const field of codec.fields) {
+      if (field.kind !== "message") continue;
+      const childCodec = field.T();
+      if (field.localName === "richItemContents") {
+        edits.set(field.no, payload => {
+          const item = childCodec.fromBinary(payload, {
+            readerFactory: input => new BoundedBinaryReader(input, budget)
+          });
+          return isFeedAd(item) ? null : payload;
+        });
+      } else if (hasFeedItems(childCodec)) {
+        edits.set(field.no, payload => rewriteFeedBytes(payload, childCodec, budget));
+      }
+    }
+    return rewriteBinaryFields(bytes, edits, budget);
+  }
+
+  const feedSchemas = new Map();
+  function hasFeedItems(codec) {
+    if (feedSchemas.has(codec)) return feedSchemas.get(codec);
+    feedSchemas.set(codec, false);
+    const result = codec.fields.some(field => field.localName === "richItemContents" ||
+      (field.kind === "message" && hasFeedItems(field.T())));
+    feedSchemas.set(codec, result);
+    return result;
   }
 
   function removeMatching(items, predicate) {
@@ -87,14 +167,6 @@
     return Boolean(content && d.list(content).some(hasAdMarker));
   }
 
-  function filterFeed(message) {
-    let changed = false;
-    visitFields(message, "richItemContents", items => {
-      if (removeMatching(items, isFeedAd)) changed = true;
-    });
-    return changed;
-  }
-
   function filterShorts(message) {
     return removeMatching(message.entries, entry =>
       entry.command?.reelWatchEndpoint?.adClientParams?.isAd === true
@@ -111,33 +183,12 @@
     return changed;
   }
 
-  function patchPlayer(player) {
-    let changed = player.adPlacements.length > 0 || player.adSlots.length > 0;
-    player.adPlacements.length = 0;
-    player.adSlots.length = 0;
-    if (player.playbackTracking?.pageadViewthroughconversion) {
-      delete player.playbackTracking.pageadViewthroughconversion;
-      changed = true;
-    }
-
-    const status = player.playabilityStatus;
-    if (!status) return changed;
-
+  function setPlaybackAbilities(status) {
     // Match the original script's complete renderer values on the working playback path.
     status.backgroundPlayerRender = ge.create({ backgroundAbility: { active: true } });
     status.pictureInPictureRender = me.create({
       pictureInPictureAbility: { active: true, f4: 0, f6: 0, f8: 1 }
     });
-    return true;
-  }
-
-  function patchWatch(message) {
-    let changed = false;
-    for (const content of message.contents) {
-      if (content.player && patchPlayer(content.player)) changed = true;
-      if (content.next && filterFeed(content.next)) changed = true;
-    }
-    return changed;
   }
 
   function patchSettings(message) {
@@ -216,6 +267,19 @@
     }
 
     const [codec, edit] = route;
+    const budget = { remainingTags: maxFieldTags };
+    let rewritten;
+    switch (routeName) {
+      case "player": rewritten = rewritePlayerBytes(bytes, budget); break;
+      case "get_watch": rewritten = rewriteWatchBytes(bytes, budget); break;
+      case "browse":
+      case "next":
+      case "search": rewritten = rewriteFeedBytes(bytes, codec, budget); break;
+    }
+    if (rewritten) {
+      if (debug) console.log(`YouTube Fixed: ${routeName} ${rewritten === bytes ? "passed through" : "edited"}`);
+      return rewritten === bytes ? {} : { body: rewritten };
+    }
     const message = codec.fromBinary(bytes, { readerFactory: input => new BoundedBinaryReader(input) });
     const changed = edit(message);
     if (debug) console.log(`YouTube Fixed: ${routeName} ${changed ? "edited" : "passed through"}`);
