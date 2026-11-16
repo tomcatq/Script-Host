@@ -12,7 +12,7 @@
 const MAX_DEPTH = 15;
 
 const REQ_URL = typeof $request !== "undefined" && $request && $request.url ? $request.url : "";
-const IS_NEXT_ANSWER_URL = /^https?:\/\/api\.zhihu\.com\/next-render\?(?:[^#]*&)?type=answer(?:[&#]|$)/i.test(REQ_URL);
+const NEXT_ROUTE = /^https?:\/\/api\.zhihu\.com\/next-(render|data|bff)(?:[?#]|$)/i.exec(REQ_URL);
 const IS_ANSWER_DETAIL_URL = /^https?:\/\/api\.zhihu\.com\/answers\/v2\/\d+(?:[?#]|$)/i.test(REQ_URL);
 
 // Endpoints that return lists of answers, questions, or comments.
@@ -115,64 +115,102 @@ function isAd(item) {
 
 function isNextAnswerAd(item) {
   if (!item || typeof item !== "object" || Array.isArray(item)) return false;
-  if (isAd(item) || item.is_ad === true || item.isAd === true || item.is_promotion === true) return true;
+  const standaloneType = /^(ad|ads|advert|advertisement|feed_advert|market_card)$/i;
+  if (typeof item.type === "string" && standaloneType.test(item.type)) return true;
 
   const types = item.biz_type_list;
-  if (Array.isArray(types) && types.some(typeLooksLikeAd)) return true;
-
-  // Recognized answer rows can carry embedded ad fields. Keep the row so swiping works.
   if (Array.isArray(types) && types.includes("answer")) return false;
-  if (isNormalContentItem(item.target || {}) || isNormalContentItem(item.data || {})) return false;
-  if (isNormalContentItem(item) && (nonEmpty(item.content) || nonEmpty(item.excerpt))) return false;
+  // Answer references and guides can carry promotion metadata alongside navigation data.
+  if (item.answer_id || item.next_answer_id || item.answer || item.next_guide) return false;
+  const content = [item, item.target, item.data, item.origin_data];
+  if (content.some((entry) => entry && isNormalContentItem(entry))) return false;
 
-  // These markers identify ad rows in the top-level next-render answer stream.
+  const origin = item.origin_data;
+  if (origin && (typeLooksLikeAd(origin.type) || typeLooksLikeAd(origin.resource_type))) return true;
+  if (isAd(item) || item.is_ad === true || item.isAd === true || item.is_promotion === true) return true;
+  if (Array.isArray(types) && types.some(typeLooksLikeAd)) return true;
   return nonEmpty(item.adjson) || nonEmpty(item.ad_info && item.ad_info.data);
 }
 
-function clean(node, depth) {
+function clean(node, depth, navigationEdits) {
   if (depth > MAX_DEPTH || node === null || typeof node !== "object") return node;
 
   if (Array.isArray(node)) {
     const out = [];
     for (const el of node) {
-      if (isAd(el)) continue;
-      out.push(clean(el, depth + 1));
+      if (!navigationEdits && isAd(el)) continue;
+      out.push(clean(el, depth + 1, navigationEdits));
     }
     return out;
   }
 
   for (const k of AD_STRIP_KEYS) {
-    if (k in node) delete node[k];
+    if (k in node) {
+      delete node[k];
+      if (navigationEdits) navigationEdits.changed = true;
+    }
   }
   for (const k of Object.keys(node)) {
     const v = node[k];
-    if (v && typeof v === "object") node[k] = clean(v, depth + 1);
+    if (v && typeof v === "object") node[k] = clean(v, depth + 1, navigationEdits);
   }
   return node;
+}
+
+function cleanNavigation(body) {
+  // Keep long numeric IDs exact when rewriting JSON in Shadowrocket's JavaScript engine.
+  const longIntegers = [];
+  const prefix = "zhihu-integer-" + Math.random().toString(36).slice(2) + "-";
+  const json = body.replace(/"(?:[^"\\]|\\[\s\S])*"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/g, (token) => {
+    if (!/^-?\d{16,}$/.test(token)) return token;
+    const index = longIntegers.push(token) - 1;
+    return '"' + prefix + index + '"';
+  });
+  const obj = JSON.parse(json);
+  if (!obj || typeof obj !== "object") return;
+
+  const edits = { changed: false };
+  if (IS_ANSWER_DETAIL_URL && Object.prototype.hasOwnProperty.call(obj, "third_business")) {
+    delete obj.third_business;
+    edits.changed = true;
+    console.log("[Zhihu AdBlock] answer detail: removed third_business");
+  }
+  if (NEXT_ROUTE) {
+    // next-data nests the list in data.data. The other routes use data at the root.
+    const container = NEXT_ROUTE[1].toLowerCase() === "data" && !Array.isArray(obj.data) ? obj.data : obj;
+    if (container && Array.isArray(container.data)) {
+      const filtered = container.data.filter((item) => !isNextAnswerAd(item));
+      const removed = container.data.length - filtered.length;
+      const paging = container.paging || obj.paging;
+      // An empty page can end scrolling even when the server supplied a continuation.
+      if (removed && (filtered.length || !paging || (!paging.next && paging.is_end !== false))) {
+        container.data = filtered;
+        edits.changed = true;
+        console.log("[Zhihu AdBlock] next answers: removed " + removed + " ad rows");
+      }
+    }
+  }
+  clean(obj, 0, edits);
+  if (!edits.changed) return;
+  const placeholder = new RegExp('"' + prefix + '(\\d+)"', "g");
+  return JSON.stringify(obj).replace(placeholder, (_, index) => longIntegers[index]);
 }
 
 (function main() {
   const body = $response && $response.body;
   if (!body) return $done({});
   try {
-    const obj = JSON.parse(body);
-    // The native answer detail carries the card between the answer and comments here.
-    if (IS_ANSWER_DETAIL_URL && obj && Object.prototype.hasOwnProperty.call(obj, "third_business")) {
-      delete obj.third_business;
-      console.log("[Zhihu AdBlock] answer detail: removed third_business");
+    if (NEXT_ROUTE || IS_ANSWER_DETAIL_URL) {
+      const out = cleanNavigation(body);
+      return $done(out === undefined ? {} : { body: out });
     }
-    if (IS_NEXT_ANSWER_URL && obj && Array.isArray(obj.data)) {
-      const before = obj.data.length;
-      obj.data = obj.data.filter((item) => !isNextAnswerAd(item));
-      console.log("[Zhihu AdBlock] next-render answers: removed " + (before - obj.data.length) + " ad rows");
-    }
-    const cleaned = clean(obj, 0);
+    const cleaned = clean(JSON.parse(body), 0);
     // Also neutralize any "adjson" hidden inside stringified JSON sub-fields
     const out = JSON.stringify(cleaned).replace(/"adjson"/g, '"adnull"');
     $done({ body: out });
   } catch (e) {
     // Not JSON, or parsing failed: pass the response through unchanged
-    console.log("[Zhihu AdBlock] " + (IS_NEXT_ANSWER_URL ? "next-render answers: " : "") + "response passed through after a parse or rewrite error");
+    console.log("[Zhihu AdBlock] response passed through after a parse or rewrite error");
     $done({});
   }
 })();
