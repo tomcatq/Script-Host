@@ -10,7 +10,8 @@
   // Fixed options. Caption and lyric translation are off.
   const hiddenGuideItems = new Set(["SPunlimited", "FEuploads", "FEmusic_immersive"]);
   const debug = false;
-  const maxNonPlaybackBodyBytes = 4 * 1024 * 1024;
+  const maxBodyBytes = 1024 * 1024;
+  const maxFieldTags = 32768;
   const pipSettingId = 151;
   const pipCategoryId = 10135;
   const adMarkers = ["/pagead/", "pagead2.googlesyndication.com"].map(marker =>
@@ -28,6 +29,17 @@
     ["get_watch", [ei, patchWatch]]
   ]);
   const playbackRoutes = new Set(["player", "get_watch", "account/get_setting"]);
+
+  // Small repeated fields can expand into many JavaScript objects during decoding.
+  class BoundedBinaryReader extends Ke {
+    remainingTags = maxFieldTags;
+
+    tag() {
+      this.remainingTags -= 1;
+      if (this.remainingTags < 0) throw new RangeError("Protobuf field limit exceeded");
+      return super.tag();
+    }
+  }
 
   function removeMatching(items, predicate) {
     let changed = false;
@@ -198,10 +210,13 @@
       ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
       : raw instanceof ArrayBuffer ? new Uint8Array(raw) : null;
     if (!bytes?.length || (bytes[0] === 0x1f && bytes[1] === 0x8b)) return {};
-    if (!isPlaybackRoute && bytes.length > maxNonPlaybackBodyBytes) return {};
+    if (bytes.length > maxBodyBytes) {
+      if (debug) console.log(`YouTube Fixed: ${routeName} exceeded the response size limit`);
+      return {};
+    }
 
     const [codec, edit] = route;
-    const message = codec.fromBinary(bytes);
+    const message = codec.fromBinary(bytes, { readerFactory: input => new BoundedBinaryReader(input) });
     const changed = edit(message);
     if (debug) console.log(`YouTube Fixed: ${routeName} ${changed ? "edited" : "passed through"}`);
     return changed ? { body: codec.toBinary(message) } : {};
