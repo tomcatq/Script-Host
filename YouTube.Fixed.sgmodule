@@ -1,5 +1,5 @@
-#!name=YouTube - Fixed (Stability Update)
-#!desc=YouTube iOS ad filtering with the original media routing and playback flags. Requires HTTPS Decryption.
+#!name=YouTube - Fixed (Playback Repair 2)
+#!desc=YouTube ad filtering, background playback flags and YouTube Music tab filtering. Requires HTTPS Decryption.
 #!author=Maasea (protobuf codecs); local Shadowrocket adaptation
 
 [Rule]
@@ -9,15 +9,12 @@ AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP)),REJECT
 AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT-NO-DROP
 
 [URL Rewrite]
-(^https?:\/\/[\w-]+\.googlevideo\.com\/(?!dclk_video_ads).+?)&ctier=L(&.+?),ctier,(.+) $1$2$3 302
-^https?:\/\/[\w-]+\.googlevideo\.com\/(?!(dclk_video_ads|videoplayback\?)).+&oad _ reject-200
-^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads _ reject-200
-^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking) _ reject-200
-^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext _ reject-200
+# Apply the original empty response fallback only to initplayback with an oad key.
+^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback\?(?:[^&#]*&)*oad(?:=[^&#]*)?(?:&[^#]*)?$ _ reject-200
 
 [Script]
 # Limit response buffering before the body reaches the script.
-youtube.fixed.response = type=http-response,pattern=^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(?:browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)(?:\?[^#]*)?$,requires-body=1,max-size=1048576,binary-body-mode=1,engine=webview,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/youtube.fixed.response.js
+youtube.fixed.response = type=http-response,pattern=^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(?:browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)(?:\?[^#]*)?$,requires-body=1,max-size=1048576,binary-body-mode=1,engine=jsc,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/youtube.fixed.response.js?revision=playback-repair-2
 
 [MITM]
-hostname = %APPEND% -redirector*.googlevideo.com, *.googlevideo.com, www.youtube.com, s.youtube.com, youtubei.googleapis.com, youtubei-att.googleapis.com
+hostname = %APPEND% -redirector*.googlevideo.com, *.googlevideo.com, youtubei.googleapis.com, youtubei-att.googleapis.com
