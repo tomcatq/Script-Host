@@ -1,5 +1,5 @@
 // Shadowrocket response adapter. Based on Maasea/sgmodule (Apache-2.0).
-// Modified 2026-11-17. Revision playback-repair-2. The generated protobuf codecs below come from:
+// Modified 2026-11-17. Revision webview-repair. The generated protobuf codecs below come from:
 // https://github.com/Maasea/sgmodule/blob/65075cdb388fc5e3094afd7e7314c67b243f3525/Script/Youtube/youtube.response.js
 // See the accompanying LICENSE.
 // Begin generated protobuf runtime and codecs (Maasea build 2026/7/19).
@@ -9,7 +9,7 @@
 
   // Fixed options. Caption and lyric translation are off.
   const hiddenGuideItems = new Set(["SPunlimited", "FEuploads", "FEmusic_immersive"]);
-  const debug = false;
+  const debug = typeof $argument !== "undefined" && String($argument).trim() === "true";
   const maxBodyBytes = 1024 * 1024;
   const maxFieldTags = 32768;
   const pipSettingId = 151;
@@ -41,6 +41,15 @@
       this.budget.remainingTags -= 1;
       if (this.budget.remainingTags < 0) throw new RangeError("Protobuf field limit exceeded");
       return super.tag();
+    }
+
+    skip(wireType) {
+      if (wireType !== 1) return super.skip(wireType);
+      // The bundled reader skips only four bytes for fixed64.
+      const start = this.pos;
+      this.pos += 8;
+      this.assertBounds();
+      return this.buf.subarray(start, this.pos);
     }
   }
 
@@ -234,17 +243,25 @@
     return changed;
   }
 
+  function passThrough(route, reason) {
+    if (debug) console.log(`YouTube Fixed: ${route} passed through (${reason})`);
+    return {};
+  }
+
   function rewriteResponse(request, response) {
     const match = /^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/([^?#]+)(?:\?[^#]*)?$/.exec(request?.url);
     const route = match && routes.get(match[1]);
-    if (!route || !response) return {};
+    if (!route) return passThrough("hook", "unrecognized endpoint");
 
     const routeName = match[1];
+    if (!response) return passThrough(routeName, "missing response");
     const isPlaybackRoute = playbackRoutes.has(routeName);
     if (debug) console.log(`YouTube Fixed: ${routeName} matched`);
 
     const status = response.status ?? response.statusCode;
-    if (status != null && !/^(?:HTTP\/\d+(?:\.\d+)?\s+)?200(?:\s.*)?$/i.test(String(status))) return {};
+    if (status != null && !/^(?:HTTP\/\d+(?:\.\d+)?\s+)?200(?:\s.*)?$/i.test(String(status))) {
+      return passThrough(routeName, "response status other than 200");
+    }
 
     const headers = response.headers ?? {};
     const typeKey = Object.keys(headers).find(key => key.toLowerCase() === "content-type");
@@ -252,7 +269,7 @@
     if (type) {
       const isProtobuf = /^application\/(?:x-protobuf|protobuf|x-protobuffer|vnd\.google\.protobuf|octet-stream)$/.test(type);
       const isTextOrFramed = /^text\/|\bjson\b|\bxml\b|^application\/grpc/.test(type);
-      if (isTextOrFramed || (!isProtobuf && !isPlaybackRoute)) return {};
+      if (isTextOrFramed || (!isProtobuf && !isPlaybackRoute)) return passThrough(routeName, "unsupported content type");
     }
 
     const body = response.body;
@@ -260,11 +277,9 @@
     const bytes = ArrayBuffer.isView(raw)
       ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
       : raw instanceof ArrayBuffer ? new Uint8Array(raw) : null;
-    if (!bytes?.length || (bytes[0] === 0x1f && bytes[1] === 0x8b)) return {};
-    if (bytes.length > maxBodyBytes) {
-      if (debug) console.log(`YouTube Fixed: ${routeName} exceeded the response size limit`);
-      return {};
-    }
+    if (!bytes?.length) return passThrough(routeName, "no binary body");
+    if (bytes[0] === 0x1f && bytes[1] === 0x8b) return passThrough(routeName, "compressed body");
+    if (bytes.length > maxBodyBytes) return passThrough(routeName, "body exceeds size limit");
 
     const [codec, edit] = route;
     const budget = { remainingTags: maxFieldTags };
@@ -277,20 +292,22 @@
       case "search": rewritten = rewriteFeedBytes(bytes, codec, budget); break;
     }
     if (rewritten) {
-      if (debug) console.log(`YouTube Fixed: ${routeName} ${rewritten === bytes ? "passed through" : "edited"}`);
-      return rewritten === bytes ? {} : { body: rewritten };
+      if (rewritten === bytes) return passThrough(routeName, "no matching fields");
+    } else {
+      const message = codec.fromBinary(bytes, { readerFactory: input => new BoundedBinaryReader(input, budget) });
+      if (!edit(message)) return passThrough(routeName, "no matching fields");
+      rewritten = codec.toBinary(message);
     }
-    const message = codec.fromBinary(bytes, { readerFactory: input => new BoundedBinaryReader(input) });
-    const changed = edit(message);
-    if (debug) console.log(`YouTube Fixed: ${routeName} ${changed ? "edited" : "passed through"}`);
-    return changed ? { body: codec.toBinary(message) } : {};
+    if (debug) console.log(`YouTube Fixed: ${routeName} edited`);
+    return { body: rewritten };
   }
 
   let result = {};
   try {
     result = rewriteResponse($request, $response);
-  } catch {
-    if (debug) console.log("YouTube Fixed: response passed through after a decoding or editing error");
+  } catch (error) {
+    const reason = error?.message === "Protobuf field limit exceeded" ? "field limit exceeded" : "decoding or editing failed";
+    result = passThrough("hook", reason);
   }
   $done(result);
 })();
