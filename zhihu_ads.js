@@ -1,19 +1,18 @@
 /*
  * Zhihu ad cleaner for Shadowrocket (http-response script)
  *
- * The script takes a generic approach and does not depend on one fixed JSON layout:
- *   1. It walks the whole JSON tree recursively.
- *   2. It removes array elements that are standalone ad cards in feeds.
- *   3. For normal content items (such as answers in next-render / questions/.../answers),
- *      it keeps the answer item so swiping to the next answer still works, and deletes
- *      only the embedded ad fields (ad_info, adjson, promotion_extra, ...) inside it.
+ * Question and answer navigation uses the original IDs and pagination data.
+ * Strip embedded ad fields and remove standalone cards from the supported lists.
  */
 
 const MAX_DEPTH = 15;
 
 const REQ_URL = typeof $request !== "undefined" && $request && $request.url ? $request.url : "";
-const NEXT_ROUTE = /^https?:\/\/api\.zhihu\.com\/next-(render|data|bff)(?:[?#]|$)/i.exec(REQ_URL);
+const IS_NEXT_ROUTE = /^https?:\/\/api\.zhihu\.com\/next-(?:render|data|bff)(?:[?#]|$)/i.test(REQ_URL);
 const IS_ANSWER_DETAIL_URL = /^https?:\/\/api\.zhihu\.com\/answers\/v2\/\d+(?:[?#]|$)/i.test(REQ_URL);
+const QUESTION_ROUTE = /^https?:\/\/(?:api|www)\.zhihu\.com\/(?:appview\/)?(?:api\/)?(?:v\d+\/)?questions\/\d+(?:\/(answers|feeds))?\/?(?:[?#]|$)/i.exec(REQ_URL);
+const IS_QUESTION_ANSWERS = Boolean(QUESTION_ROUTE && QUESTION_ROUTE[1]);
+const IS_NAVIGATION = IS_NEXT_ROUTE || IS_ANSWER_DETAIL_URL || Boolean(QUESTION_ROUTE);
 
 // Endpoints that return lists of answers, questions, or comments.
 // On these endpoints we must NOT drop answer/comment elements from arrays just because they
@@ -52,6 +51,10 @@ function nonEmpty(v) {
 
 function typeLooksLikeAd(v) {
   return typeof v === "string" && AD_TYPE_RE.test(v);
+}
+
+function hasStandaloneAdType(item) {
+  return Boolean(item && typeof item.type === "string" && /^(ad|ads|advert|advertisement|feed_advert|market_card)$/i.test(item.type));
 }
 
 function isNormalContentItem(item) {
@@ -115,8 +118,7 @@ function isAd(item) {
 
 function isNextAnswerAd(item) {
   if (!item || typeof item !== "object" || Array.isArray(item)) return false;
-  const standaloneType = /^(ad|ads|advert|advertisement|feed_advert|market_card)$/i;
-  if (typeof item.type === "string" && standaloneType.test(item.type)) return true;
+  if (hasStandaloneAdType(item)) return true;
 
   const types = item.biz_type_list;
   if (Array.isArray(types) && types.includes("answer")) return false;
@@ -132,14 +134,17 @@ function isNextAnswerAd(item) {
   return nonEmpty(item.adjson) || nonEmpty(item.ad_info && item.ad_info.data);
 }
 
-function clean(node, depth, navigationEdits) {
+function clean(node, depth, edits) {
   if (depth > MAX_DEPTH || node === null || typeof node !== "object") return node;
 
   if (Array.isArray(node)) {
     const out = [];
     for (const el of node) {
-      if (!navigationEdits && isAd(el)) continue;
-      out.push(clean(el, depth + 1, navigationEdits));
+      if (!IS_NAVIGATION && isAd(el)) {
+        edits.changed = true;
+        continue;
+      }
+      out.push(clean(el, depth + 1, edits));
     }
     return out;
   }
@@ -147,17 +152,17 @@ function clean(node, depth, navigationEdits) {
   for (const k of AD_STRIP_KEYS) {
     if (k in node) {
       delete node[k];
-      if (navigationEdits) navigationEdits.changed = true;
+      edits.changed = true;
     }
   }
   for (const k of Object.keys(node)) {
     const v = node[k];
-    if (v && typeof v === "object") node[k] = clean(v, depth + 1, navigationEdits);
+    if (v && typeof v === "object") node[k] = clean(v, depth + 1, edits);
   }
   return node;
 }
 
-function cleanNavigation(body) {
+function rewriteResponse(body) {
   // Keep long numeric IDs exact when rewriting JSON in Shadowrocket's JavaScript engine.
   const longIntegers = [];
   const prefix = "zhihu-integer-" + Math.random().toString(36).slice(2) + "-";
@@ -175,18 +180,20 @@ function cleanNavigation(body) {
     edits.changed = true;
     console.log("[Zhihu AdBlock] answer detail: removed third_business");
   }
-  if (NEXT_ROUTE) {
-    // next-data nests the list in data.data. The other routes use data at the root.
-    const container = NEXT_ROUTE[1].toLowerCase() === "data" && !Array.isArray(obj.data) ? obj.data : obj;
+  if (IS_NEXT_ROUTE || IS_QUESTION_ANSWERS) {
+    // Keep the list in its original envelope, including pagination on either level.
+    const container = Array.isArray(obj.data) ? obj : obj.data;
     if (container && Array.isArray(container.data)) {
-      const filtered = container.data.filter((item) => !isNextAnswerAd(item));
+      // Question-list rows are used to navigate. Remove only explicitly typed ads there.
+      const isAdRow = IS_NEXT_ROUTE ? isNextAnswerAd : hasStandaloneAdType;
+      const filtered = container.data.filter((item) => !isAdRow(item));
       const removed = container.data.length - filtered.length;
-      const paging = container.paging || obj.paging;
+      const hasMore = [container.paging, obj.paging].some((paging) => paging && (paging.next || paging.is_end === false));
       // An empty page can end scrolling even when the server supplied a continuation.
-      if (removed && (filtered.length || !paging || (!paging.next && paging.is_end !== false))) {
+      if (removed && (filtered.length || !hasMore)) {
         container.data = filtered;
         edits.changed = true;
-        console.log("[Zhihu AdBlock] next answers: removed " + removed + " ad rows");
+        console.log("[Zhihu AdBlock] answer list: removed " + removed + " ad rows");
       }
     }
   }
@@ -200,14 +207,8 @@ function cleanNavigation(body) {
   const body = $response && $response.body;
   if (!body) return $done({});
   try {
-    if (NEXT_ROUTE || IS_ANSWER_DETAIL_URL) {
-      const out = cleanNavigation(body);
-      return $done(out === undefined ? {} : { body: out });
-    }
-    const cleaned = clean(JSON.parse(body), 0);
-    // Also neutralize any "adjson" hidden inside stringified JSON sub-fields
-    const out = JSON.stringify(cleaned).replace(/"adjson"/g, '"adnull"');
-    $done({ body: out });
+    const out = rewriteResponse(body);
+    $done(out === undefined ? {} : { body: out });
   } catch (e) {
     // Not JSON, or parsing failed: pass the response through unchanged
     console.log("[Zhihu AdBlock] response passed through after a parse or rewrite error");
