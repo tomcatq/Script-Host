@@ -163,12 +163,17 @@ function clean(node, depth, edits) {
 }
 
 function rewriteResponse(body) {
-  // Keep long numeric IDs exact when rewriting JSON in Shadowrocket's JavaScript engine.
+  const firstChar = body.trimStart()[0];
+  if (firstChar !== "{" && firstChar !== "[") return;
+
+  // Keep long numeric IDs (16+ digits) exact when rewriting JSON in Shadowrocket's JavaScript engine.
+  // Use an unrolled string pattern so iOS JavaScriptCore (Yarr) never backtracks per character on large HTML strings,
+  // and only match 16+ digit integers outside strings instead of invoking the callback on every short number.
   const longIntegers = [];
   const prefix = "zhihu-integer-" + Math.random().toString(36).slice(2) + "-";
-  const json = body.replace(/"(?:[^"\\]|\\[\s\S])*"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/g, (token) => {
-    if (!/^-?\d{16,}$/.test(token)) return token;
-    const index = longIntegers.push(token) - 1;
+  const json = body.replace(/"[^"\\]*(?:\\[\s\S][^"\\]*)*"|(-?\d{16,})(?=\s*[,\]\}])/g, (token, intToken) => {
+    if (!intToken) return token;
+    const index = longIntegers.push(intToken) - 1;
     return '"' + prefix + index + '"';
   });
   const obj = JSON.parse(json);
@@ -199,6 +204,7 @@ function rewriteResponse(body) {
   }
   clean(obj, 0, edits);
   if (!edits.changed) return;
+  if (!longIntegers.length) return JSON.stringify(obj);
   const placeholder = new RegExp('"' + prefix + '(\\d+)"', "g");
   return JSON.stringify(obj).replace(placeholder, (_, index) => longIntegers[index]);
 }
