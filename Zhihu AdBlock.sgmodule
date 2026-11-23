@@ -8,45 +8,47 @@
 # zhihu_ads.js after saving the updated script in Shadowrocket's local script picker.
 
 [Rule]
-# Block QUIC (HTTP/3 over UDP) so Zhihu falls back to TCP/HTTPS, which MITM can decrypt.
-# The captured log shows Zhihu (for example www.zhihu.com) sending traffic over QUIC.
-# This rule format is taken from the user's own log, so Shadowrocket accepts it.
+# Block QUIC (HTTP/3 over UDP) for Zhihu domains only so Zhihu falls back to TCP/HTTPS, which MITM can decrypt.
+# Do NOT block UDP 443 globally across all domains/IPs, as that can disrupt UDP-based proxies (e.g. Hysteria2) and other apps.
 AND,((DST-PORT,443),(PROTOCOL,UDP),(DOMAIN-SUFFIX,zhihu.com)),REJECT-NO-DROP
 AND,((DST-PORT,443),(PROTOCOL,UDP),(DOMAIN-SUFFIX,zhimg.com)),REJECT-NO-DROP
-# The log also shows QUIC going straight to bare IPs (e.g. 120.240.x.x). Domain rules can't catch that,
-# so this rule blocks QUIC for every app. Other apps fall back to TCP and keep working.
-AND,((DST-PORT,443),(PROTOCOL,UDP)),REJECT-NO-DROP
-# Zhihu HTTPDNS. Blocking it makes the app fall back to normal DNS, so it connects by hostname
-# (api.zhihu.com) and MITM can take effect.
-# Current HTTPDNS, seen in the 2026-11-05 log as http://182.61.194.7/v2/resolv?host=...zhihu.com, plus its HTTPS/IPv6 siblings:
-IP-CIDR,182.61.194.0/24,REJECT,no-resolve
-IP-CIDR,106.13.244.173/32,REJECT,no-resolve
-IP-CIDR6,240c:409f::/32,REJECT,no-resolve
-# Older HTTPDNS addresses from community rule lists:
-IP-CIDR,118.89.204.198/32,REJECT,no-resolve
-IP-CIDR6,2402:4e00:1200:ed00:0:9089:6dac:96b6/128,REJECT,no-resolve
-# Ad delivery and analytics domains
-DOMAIN,sugar.zhihu.com,REJECT
-DOMAIN,zhihu-web-analytics.zhihu.com,REJECT
-DOMAIN,crash2.zhihu.com,REJECT
-# Third-party ad SDKs and ad-tracking hosts seen in the captured logs (they serve or count splash ads)
+# Zhihu HTTPDNS (Baidu Cloud HTTPDNS).
+# Use REJECT-DROP (silent packet drop) instead of REJECT (instant 0ms TCP RST) and match only the exact HTTPDNS endpoints
+# instead of the entire 240c:409f::/32 or 182.61.194.0/24 Baidu Cloud ranges. Instant TCP RST triggers an infinite
+# tight retry storm in Zhihu's HTTPDNS SDK that exhausts the app's connection pool and disconnects Zhihu.
+DOMAIN,httpdns.baidubce.com,REJECT-DROP
+IP-CIDR,182.61.194.7/32,REJECT-DROP,no-resolve
+IP-CIDR,182.61.194.9/32,REJECT-DROP,no-resolve
+IP-CIDR,106.13.244.173/32,REJECT-DROP,no-resolve
+IP-CIDR6,240c:409f:1000::4:0:a5/128,REJECT-DROP,no-resolve
+# Older HTTPDNS addresses:
+IP-CIDR,118.89.204.198/32,REJECT-DROP,no-resolve
+IP-CIDR6,2402:4e00:1200:ed00:0:9089:6dac:96b6/128,REJECT-DROP,no-resolve
+# NOTE: Do NOT reject sugar.zhihu.com, duga.zhihu.com, zhihu-web-analytics.zhihu.com, or crash2.zhihu.com at the socket level.
+# They do not serve ads, and rejecting them triggers a 10-20 req/sec infinite retry + HTTPDNS loop that stalls Zhihu's network queue.
+# Third-party ad SDKs and ad-tracking hosts seen in the captured logs (use REJECT-DROP to prevent SDK retry storms)
+# Tencent GDT (广点通 / 优量汇)
+DOMAIN-SUFFIX,gdt.qq.com,REJECT-DROP
+DOMAIN-SUFFIX,gdtimg.com,REJECT-DROP
+DOMAIN-SUFFIX,ugdtimg.com,REJECT-DROP
 # Kuaishou ad network
-DOMAIN,open.kuaishouzt.com,REJECT
-DOMAIN,open.kwaizt.com,REJECT
+DOMAIN,open.kuaishouzt.com,REJECT-DROP
+DOMAIN,open.kwaizt.com,REJECT-DROP
 # ByteDance Pangolin
-DOMAIN-SUFFIX,pangolin-sdk-toutiao.com,REJECT
-DOMAIN-SUFFIX,pangolin-sdk-toutiao1.com,REJECT
-DOMAIN-SUFFIX,pglstatp-toutiao.com,REJECT
+DOMAIN-SUFFIX,pangolin-sdk-toutiao.com,REJECT-DROP
+DOMAIN-SUFFIX,pangolin-sdk-toutiao1.com,REJECT-DROP
+DOMAIN-SUFFIX,pglstatp-toutiao.com,REJECT-DROP
 # Alibaba Tanx
-DOMAIN-SUFFIX,tanx.com,REJECT
-DOMAIN,tanx-creative.taobao.com,REJECT
+DOMAIN-SUFFIX,tanx.com,REJECT-DROP
+DOMAIN,tanx-creative.taobao.com,REJECT-DROP
 # Ad impression and tracking
-DOMAIN-SUFFIX,ad.xelements.cn,REJECT
-DOMAIN-SUFFIX,miaozhen.com,REJECT
+DOMAIN-SUFFIX,ad.xelements.cn,REJECT-DROP
+DOMAIN-SUFFIX,miaozhen.com,REJECT-DROP
 
 [URL Rewrite]
-# ---------- HTTPDNS over plain HTTP (no MITM needed). Catches the lookup even if Zhihu moves to another IP. ----------
-^http:\/\/\d+\.\d+\.\d+\.\d+\/v2\/resolv\?host= - reject
+# ---------- HTTPDNS over plain HTTP: return an empty JSON object (reject-dict) instead of a socket error ----------
+# Returning 200 OK with {} stops Zhihu's HTTPDNS SDK from looping on failed lookups and makes it fall back cleanly to system DNS.
+^https?:\/\/\d+\.\d+\.\d+\.\d+\/v2\/resolv\?host= - reject-dict
 # ---------- Splash / launch ads ----------
 ^https?:\/\/api\.zhihu\.com\/commercial_api\/(launch_v2|real_time_launch_v2) - reject-dict
 ^https?:\/\/api\.zhihu\.com\/launch\? - reject-dict
@@ -59,7 +61,6 @@ DOMAIN-SUFFIX,miaozhen.com,REJECT
 ^https?:\/\/api\.zhihu\.com\/commercial_api\/answer\/\d+\/bottom-v2(?:[?#]|$) - reject-dict
 ^https?:\/\/(api|www)\.zhihu\.com\/(appview\/)?(api\/)?v\d\/answers\/\d+\/recommendations - reject-dict
 ^https?:\/\/(api|www)\.zhihu\.com\/.*\/comments\/featured-comment-ad - reject-dict
-^https?:\/\/www\.zhihu\.com\/appview\/(p|zvideo)\/.*entry=(preload-topstory|preload-search|preload-subscription) - reject
 # ---------- Ad tracking ----------
 ^https?:\/\/api\.zhihu\.com\/(fringe|zst\/events) - reject-dict
 # ---------- Optional: remove the preset words in the search box (uncomment to enable) ----------
@@ -67,7 +68,9 @@ DOMAIN-SUFFIX,miaozhen.com,REJECT
 
 [Script]
 # Remove ad cards from JSON responses: home feed, hot list, follow feed, question/answer pages, comments and search.
-zhihu-ads = type=http-response,pattern=^https?:\/\/(api|www)\.zhihu\.com\/(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|(appview\/)?(api\/)?(v\d+\/)?(questions|answers|comment_v5|comments)\b|next-(render|data|bff)|search_v3|v5\.1\/topics|prague\/),requires-body=1,max-size=0,timeout=10,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/refs/heads/main/zhihu_ads.js?v=question-navigation
+# Only match JSON API endpoints (exclude www.zhihu.com/appview/ HTML WebViews) and use a clean canonical script-path
+# without query parameters so Shadowrocket caches the script locally instead of re-fetching raw.githubusercontent.com over proxy.
+zhihu-ads = type=http-response,pattern=^https?:\/\/(api\.zhihu\.com|www\.zhihu\.com\/api)\/(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|(api\/)?(v\d+\/)?(questions|answers|comment_v5|comments)\b|next-(render|data|bff)|search_v3|v5\.1\/topics|prague\/),requires-body=1,max-size=2097152,timeout=5,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/main/zhihu_ads.js
 
 [MITM]
 hostname = %APPEND% api.zhihu.com, www.zhihu.com
