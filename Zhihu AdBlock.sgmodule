@@ -8,47 +8,43 @@
 # zhihu_ads.js after saving the updated script in Shadowrocket's local script picker.
 
 [Rule]
-# Block QUIC (HTTP/3 over UDP) for Zhihu domains only so Zhihu falls back to TCP/HTTPS, which MITM can decrypt.
-# Do NOT block UDP 443 globally across all domains/IPs, as that can disrupt UDP-based proxies (e.g. Hysteria2) and other apps.
-AND,((DST-PORT,443),(PROTOCOL,UDP),(DOMAIN-SUFFIX,zhihu.com)),REJECT-NO-DROP
-AND,((DST-PORT,443),(PROTOCOL,UDP),(DOMAIN-SUFFIX,zhimg.com)),REJECT-NO-DROP
+# Block QUIC (HTTP/3 over UDP) ONLY on api.zhihu.com so it falls back cleanly to TCP/HTTPS for MITM.
+AND,((DOMAIN,api.zhihu.com),(PROTOCOL,UDP)),REJECT-NO-DROP
 # Zhihu HTTPDNS (Baidu Cloud HTTPDNS).
-# Use REJECT-DROP (silent packet drop) instead of REJECT (instant 0ms TCP RST) and match only the exact HTTPDNS endpoints
-# instead of the entire 240c:409f::/32 or 182.61.194.0/24 Baidu Cloud ranges. Instant TCP RST triggers an infinite
-# tight retry storm in Zhihu's HTTPDNS SDK that exhausts the app's connection pool and disconnects Zhihu.
-DOMAIN,httpdns.baidubce.com,REJECT-DROP
-IP-CIDR,182.61.194.7/32,REJECT-DROP,no-resolve
-IP-CIDR,182.61.194.9/32,REJECT-DROP,no-resolve
-IP-CIDR,106.13.244.173/32,REJECT-DROP,no-resolve
-IP-CIDR6,240c:409f:1000::4:0:a5/128,REJECT-DROP,no-resolve
+# MUST use REJECT-NO-DROP (fast-fail TCP RST / ICMP unreachable), NOT REJECT-DROP.
+# REJECT-DROP silently drops TCP SYN packets and makes Zhihu hang for 15-60s waiting for DNS timeouts.
+DOMAIN,httpdns.baidubce.com,REJECT-NO-DROP
+IP-CIDR,182.61.194.7/32,REJECT-NO-DROP,no-resolve
+IP-CIDR,182.61.194.9/32,REJECT-NO-DROP,no-resolve
+IP-CIDR,106.13.244.173/32,REJECT-NO-DROP,no-resolve
+IP-CIDR6,240c:409f:1000::4:0:a5/128,REJECT-NO-DROP,no-resolve
 # Older HTTPDNS addresses:
-IP-CIDR,118.89.204.198/32,REJECT-DROP,no-resolve
-IP-CIDR6,2402:4e00:1200:ed00:0:9089:6dac:96b6/128,REJECT-DROP,no-resolve
-# NOTE: Do NOT reject sugar.zhihu.com, duga.zhihu.com, zhihu-web-analytics.zhihu.com, or crash2.zhihu.com at the socket level.
-# They do not serve ads, and rejecting them triggers a 10-20 req/sec infinite retry + HTTPDNS loop that stalls Zhihu's network queue.
-# Third-party ad SDKs and ad-tracking hosts seen in the captured logs (use REJECT-DROP to prevent SDK retry storms)
+IP-CIDR,118.89.204.198/32,REJECT-NO-DROP,no-resolve
+IP-CIDR6,2402:4e00:1200:ed00:0:9089:6dac:96b6/128,REJECT-NO-DROP,no-resolve
+# NOTE: Do NOT reject sugar.zhihu.com, duga.zhihu.com, zhihu-web-analytics.zhihu.com, or crash2.zhihu.com.
+# They do not serve ads, and blocking them triggers a high-frequency analytics + HTTPDNS retry loop.
+# Third-party ad SDKs and ad-tracking hosts (use REJECT-NO-DROP so ad SDKs fail fast without hanging launch/feeds)
 # Tencent GDT (广点通 / 优量汇)
-DOMAIN-SUFFIX,gdt.qq.com,REJECT-DROP
-DOMAIN-SUFFIX,gdtimg.com,REJECT-DROP
-DOMAIN-SUFFIX,ugdtimg.com,REJECT-DROP
+DOMAIN-SUFFIX,gdt.qq.com,REJECT-NO-DROP
+DOMAIN-SUFFIX,gdtimg.com,REJECT-NO-DROP
+DOMAIN-SUFFIX,ugdtimg.com,REJECT-NO-DROP
 # Kuaishou ad network
-DOMAIN,open.kuaishouzt.com,REJECT-DROP
-DOMAIN,open.kwaizt.com,REJECT-DROP
+DOMAIN,open.kuaishouzt.com,REJECT-NO-DROP
+DOMAIN,open.kwaizt.com,REJECT-NO-DROP
 # ByteDance Pangolin
-DOMAIN-SUFFIX,pangolin-sdk-toutiao.com,REJECT-DROP
-DOMAIN-SUFFIX,pangolin-sdk-toutiao1.com,REJECT-DROP
-DOMAIN-SUFFIX,pglstatp-toutiao.com,REJECT-DROP
+DOMAIN-SUFFIX,pangolin-sdk-toutiao.com,REJECT-NO-DROP
+DOMAIN-SUFFIX,pangolin-sdk-toutiao1.com,REJECT-NO-DROP
+DOMAIN-SUFFIX,pglstatp-toutiao.com,REJECT-NO-DROP
 # Alibaba Tanx
-DOMAIN-SUFFIX,tanx.com,REJECT-DROP
-DOMAIN,tanx-creative.taobao.com,REJECT-DROP
+DOMAIN-SUFFIX,tanx.com,REJECT-NO-DROP
+DOMAIN,tanx-creative.taobao.com,REJECT-NO-DROP
 # Ad impression and tracking
-DOMAIN-SUFFIX,ad.xelements.cn,REJECT-DROP
-DOMAIN-SUFFIX,miaozhen.com,REJECT-DROP
+DOMAIN-SUFFIX,ad.xelements.cn,REJECT-NO-DROP
+DOMAIN-SUFFIX,miaozhen.com,REJECT-NO-DROP
 
 [URL Rewrite]
-# ---------- HTTPDNS over plain HTTP: return an empty JSON object (reject-dict) instead of a socket error ----------
-# Returning 200 OK with {} stops Zhihu's HTTPDNS SDK from looping on failed lookups and makes it fall back cleanly to system DNS.
-^https?:\/\/\d+\.\d+\.\d+\.\d+\/v2\/resolv\?host= - reject-dict
+# ---------- HTTPDNS over plain HTTP: reject immediately (NOT reject-dict 200 OK {}) so Zhihu falls back to system DNS ----------
+^http:\/\/\d+\.\d+\.\d+\.\d+\/v2\/resolv\?host= - reject
 # ---------- Splash / launch ads ----------
 ^https?:\/\/api\.zhihu\.com\/commercial_api\/(launch_v2|real_time_launch_v2) - reject-dict
 ^https?:\/\/api\.zhihu\.com\/launch\? - reject-dict
@@ -59,18 +55,17 @@ DOMAIN-SUFFIX,miaozhen.com,REJECT-DROP
 ^https?:\/\/api\.zhihu\.com\/brand\/question\/\d+\/card - reject-dict
 # ---------- Recommendation/ad cards under answers and above comments ----------
 ^https?:\/\/api\.zhihu\.com\/commercial_api\/answer\/\d+\/bottom-v2(?:[?#]|$) - reject-dict
-^https?:\/\/(api|www)\.zhihu\.com\/(appview\/)?(api\/)?v\d\/answers\/\d+\/recommendations - reject-dict
-^https?:\/\/(api|www)\.zhihu\.com\/.*\/comments\/featured-comment-ad - reject-dict
+^https?:\/\/api\.zhihu\.com\/(api\/)?v\d\/answers\/\d+\/recommendations - reject-dict
+^https?:\/\/api\.zhihu\.com\/.*\/comments\/featured-comment-ad - reject-dict
 # ---------- Ad tracking ----------
 ^https?:\/\/api\.zhihu\.com\/(fringe|zst\/events) - reject-dict
 # ---------- Optional: remove the preset words in the search box (uncomment to enable) ----------
 # ^https?:\/\/api\.zhihu\.com\/search\/preset_words - reject-dict
 
 [Script]
-# Remove ad cards from JSON responses: home feed, hot list, follow feed, question/answer pages, comments and search.
-# Only match JSON API endpoints (exclude www.zhihu.com/appview/ HTML WebViews) and use a clean canonical script-path
-# without query parameters so Shadowrocket caches the script locally instead of re-fetching raw.githubusercontent.com over proxy.
-zhihu-ads = type=http-response,pattern=^https?:\/\/(api\.zhihu\.com|www\.zhihu\.com\/api)\/(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|(api\/)?(v\d+\/)?(questions|answers|comment_v5|comments)\b|next-(render|data|bff)|search_v3|v5\.1\/topics|prague\/),requires-body=1,max-size=2097152,timeout=5,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/main/zhihu_ads.js
+# Remove ad cards from JSON responses on api.zhihu.com: home feed, hot list, follow feed, question/answer pages, comments and search.
+# Omit timeout= (Shadowrocket treats script timeout= as milliseconds in some builds, so timeout=5/10 can abort normal responses).
+zhihu-ads = type=http-response,pattern=^https?:\/\/api\.zhihu\.com\/(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|(api\/)?(v\d+\/)?(questions|answers|comment_v5|comments)\b|next-(render|data|bff)|search_v3|v5\.1\/topics|prague\/),requires-body=1,max-size=-1,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/main/zhihu_ads.js
 
 [MITM]
-hostname = %APPEND% api.zhihu.com, www.zhihu.com
+hostname = %APPEND% api.zhihu.com
