@@ -167,15 +167,17 @@ function rewriteResponse(body) {
   if (firstChar !== "{" && firstChar !== "[") return;
 
   // Keep long numeric IDs (16+ digits) exact when rewriting JSON in Shadowrocket's JavaScript engine.
-  // Use an unrolled string pattern so iOS JavaScriptCore (Yarr) never backtracks per character on large HTML strings,
-  // and only match 16+ digit integers outside strings instead of invoking the callback on every short number.
+  // Only scan if a 16+ digit JSON value is actually present, and anchor on JSON value delimiters
+  // (:, [, ,) so decimals like 0.1234567890123456 are never corrupted.
   const longIntegers = [];
   const prefix = "zhihu-integer-" + Math.random().toString(36).slice(2) + "-";
-  const json = body.replace(/"[^"\\]*(?:\\[\s\S][^"\\]*)*"|(-?\d{16,})(?=\s*[,\]\}])/g, (token, intToken) => {
-    if (!intToken) return token;
-    const index = longIntegers.push(intToken) - 1;
-    return '"' + prefix + index + '"';
-  });
+  const json = /[:,\[]\s*-?\d{16,}\s*[,\]\}]/.test(body)
+    ? body.replace(/"[^"\\]*(?:\\[\s\S][^"\\]*)*"|([:,\[]\s*)(-?\d{16,})(?=\s*[,\]\}])/g, (token, sep, intToken) => {
+        if (!intToken) return token;
+        const index = longIntegers.push(intToken) - 1;
+        return sep + '"' + prefix + index + '"';
+      })
+    : body;
   const obj = JSON.parse(json);
   if (!obj || typeof obj !== "object") return;
 
