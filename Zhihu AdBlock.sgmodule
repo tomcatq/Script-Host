@@ -7,6 +7,16 @@
 # Install the updated zhihu_ads.js at the script-path below or set script-path to
 # zhihu_ads.js after saving the updated script in Shadowrocket's local script picker.
 
+[General]
+# Fixes "no network after Zhihu sat in the background for a long time".
+# HTTPDNS is blocked below, so Zhihu falls back to system DNS. Through Shadowrocket that normally returns a
+# fake IP (198.18.x.x), and Zhihu's DNS layer caches it, including on disk. When the Shadowrocket tunnel
+# restarts while Zhihu is idle (iOS reclaiming memory, Wi-Fi/cellular switch, sleep), the fake-IP table is
+# reset. Zhihu then keeps connecting to a cached 198.18.x.x address that maps to nothing, or to another
+# domain, until that cache expires. That's why it took several force-quits to recover.
+# Real IPs for Zhihu domains remain valid after the tunnel restarts, so the cached addresses keep working.
+always-real-ip = %APPEND% zhihu.com, *.zhihu.com, *.zhimg.com
+
 [Rule]
 # Block QUIC (HTTP/3 over UDP) ONLY on api.zhihu.com so it falls back cleanly to TCP/HTTPS for MITM.
 AND,((DOMAIN,api.zhihu.com),(PROTOCOL,UDP)),REJECT-NO-DROP
