@@ -25,6 +25,10 @@ const IS_ANSWER_LIST_URL = /\/(next-(render|data|bff)|(appview\/)?(api\/)?(v\d\/
 const AD_TYPE_RE =
   /(^|[_\-])(ad|ads|advert|adverts|advertisement|promotion)([_\-]|$)|feed_advert|market_card|slot_(video_)?event_card|featured_comment_ad/i;
 
+// Fast pre-check on the raw response string so clean responses skip regex tokenization and JSON.parse altogether
+const FAST_MAY_HAVE_AD_RE =
+  /"(ad_info|adjson|ad_list|promotion_extra|ad_extra|commercial_info|mobile_banner|ad_track_url|featured_comment_ad|comment_ad|third_business|is_ad|isAd|is_promotion|biz_type_list)"|"(type|card_type|style|object_type|biz_type|resource_type|source)"\s*:\s*"[^"]*(ad|advert|promotion|market_card|event_card)/i;
+
 // Fields that appear on promoted feed cards (and sometimes as embedded ad data on answer objects)
 const AD_MARKER_KEYS = ["adjson", "promotion_extra", "ad_extra"];
 
@@ -165,6 +169,7 @@ function clean(node, depth, edits) {
 function rewriteResponse(body) {
   const firstChar = body.trimStart()[0];
   if (firstChar !== "{" && firstChar !== "[") return;
+  if (!FAST_MAY_HAVE_AD_RE.test(body)) return;
 
   // Keep long numeric IDs (16+ digits) exact when rewriting JSON in Shadowrocket's JavaScript engine.
   // Only scan if a 16+ digit JSON value is actually present, and anchor on JSON value delimiters
