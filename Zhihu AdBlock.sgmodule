@@ -7,22 +7,11 @@
 # Install the updated zhihu_ads.js at the script-path below or set script-path to
 # zhihu_ads.js after saving the updated script in Shadowrocket's local script picker.
 
-[General]
-# Fixes "no network after Zhihu sat in the background for a long time".
-# HTTPDNS is blocked below, so Zhihu falls back to system DNS. Through Shadowrocket that normally returns a
-# fake IP (198.18.x.x), and Zhihu's DNS layer caches it, including on disk. When the Shadowrocket tunnel
-# restarts while Zhihu is idle (iOS reclaiming memory, Wi-Fi/cellular switch, sleep), the fake-IP table is
-# reset. Zhihu then keeps connecting to a cached 198.18.x.x address that maps to nothing, or to another
-# domain, until that cache expires. That's why it took several force-quits to recover.
-# Real IPs for Zhihu domains remain valid after the tunnel restarts, so the cached addresses keep working.
-always-real-ip = %APPEND% zhihu.com, *.zhihu.com, *.zhimg.com
-
 [Rule]
-# Block QUIC (HTTP/3 over UDP) ONLY on api.zhihu.com so it falls back cleanly to TCP/HTTPS for MITM.
-AND,((DOMAIN,api.zhihu.com),(PROTOCOL,UDP)),REJECT-NO-DROP
+# Block QUIC (HTTP/3 over UDP) for zhihu.com so the app falls back to TCP/HTTPS for MITM.
+AND,((DST-PORT,443),(PROTOCOL,UDP),(DOMAIN-SUFFIX,zhihu.com)),REJECT-NO-DROP
 # Zhihu HTTPDNS (Baidu Cloud HTTPDNS).
-# MUST use REJECT-NO-DROP (fast-fail TCP RST / ICMP unreachable), NOT REJECT-DROP.
-# REJECT-DROP silently drops TCP SYN packets and makes Zhihu hang for 15-60s waiting for DNS timeouts.
+# Use REJECT-NO-DROP (fast-fail TCP RST / ICMP unreachable) so Zhihu immediately falls back to system DNS.
 DOMAIN,httpdns.baidubce.com,REJECT-NO-DROP
 IP-CIDR,182.61.194.7/32,REJECT-NO-DROP,no-resolve
 IP-CIDR,182.61.194.9/32,REJECT-NO-DROP,no-resolve
@@ -31,9 +20,7 @@ IP-CIDR6,240c:409f:1000::4:0:a5/128,REJECT-NO-DROP,no-resolve
 # Older HTTPDNS addresses:
 IP-CIDR,118.89.204.198/32,REJECT-NO-DROP,no-resolve
 IP-CIDR6,2402:4e00:1200:ed00:0:9089:6dac:96b6/128,REJECT-NO-DROP,no-resolve
-# NOTE: Do NOT reject sugar.zhihu.com, duga.zhihu.com, zhihu-web-analytics.zhihu.com, or crash2.zhihu.com.
-# They do not serve ads, and blocking them triggers a high-frequency analytics + HTTPDNS retry loop.
-# Third-party ad SDKs and ad-tracking hosts (use REJECT-NO-DROP so ad SDKs fail fast without hanging launch/feeds)
+# Third-party ad SDKs and ad-tracking hosts
 # Tencent GDT (广点通 / 优量汇)
 DOMAIN-SUFFIX,gdt.qq.com,REJECT-NO-DROP
 DOMAIN-SUFFIX,gdtimg.com,REJECT-NO-DROP
@@ -53,7 +40,7 @@ DOMAIN-SUFFIX,ad.xelements.cn,REJECT-NO-DROP
 DOMAIN-SUFFIX,miaozhen.com,REJECT-NO-DROP
 
 [URL Rewrite]
-# ---------- HTTPDNS over plain HTTP: reject immediately (NOT reject-dict 200 OK {}) so Zhihu falls back to system DNS ----------
+# ---------- HTTPDNS over plain HTTP: reject immediately so Zhihu falls back to system DNS ----------
 ^http:\/\/\d+\.\d+\.\d+\.\d+\/v2\/resolv\?host= - reject
 # ---------- Splash / launch ads ----------
 ^https?:\/\/api\.zhihu\.com\/commercial_api\/(launch_v2|real_time_launch_v2) - reject-dict
@@ -73,9 +60,9 @@ DOMAIN-SUFFIX,miaozhen.com,REJECT-NO-DROP
 # ^https?:\/\/api\.zhihu\.com\/search\/preset_words - reject-dict
 
 [Script]
-# Remove ad cards from JSON responses on api.zhihu.com: home feed, hot list, follow feed, question/answer pages, comments and search.
-# Omit timeout= (Shadowrocket treats script timeout= as milliseconds in some builds, so timeout=5/10 can abort normal responses).
-zhihu-ads = type=http-response,pattern=^https?:\/\/api\.zhihu\.com\/(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|(api\/)?(v\d+\/)?(questions|answers|comment_v5|comments)\b|next-(render|data|bff)|search_v3|v5\.1\/topics|prague\/),requires-body=1,max-size=-1,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/main/zhihu_ads.js
+# Only intercept the specific feed, question-answer list, answer-detail, and next-render endpoints that can carry ad JSON.
+# Avoiding broad /questions, /answers, and /comments sub-requests prevents overloading multiplexed HTTP/2 MITM streams.
+zhihu-ads = type=http-response,pattern=^https?:\/\/api\.zhihu\.com\/(topstory\/(recommend|hot-lists?)|moments(_v\d)?|feed-root|(api\/)?(v\d+\/)?questions\/\d+\/(answers|feeds)\b|answers\/v2\/\d+(?:[?#]|$)|next-(render|data|bff)|search_v3|v5\.1\/topics|prague\/),requires-body=1,max-size=-1,script-path=https://raw.githubusercontent.com/tomcatq/Script-Host/main/zhihu_ads.js
 
 [MITM]
 hostname = %APPEND% api.zhihu.com
